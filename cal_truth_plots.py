@@ -39,56 +39,7 @@ class object(object):
         self.dec = None
         self.mag = None
         self.mag_err = None
-        
-def parse_gobjs_file(file):
-    
-    global_objs = []
-    
-    filelines = file.readlines()
-    for line in filelines:
-        entries = line.split()
-        ra = float(entries[0])
-        if ra > 300.:
-            ra -= 360.
-        dec = float(entries[1])
-        
-        i = 2
-        while i < len(entries):
-            magerr = float(entries[i+1])
-            if magerr >= good_quality_magerr:
-                # delete these from the entries
-                for j in range(7):
-                    entries.pop(i)
-            else:
-                i += 7
 
-        ndet = int((len(entries)-2)/7)
-        if ndet < 2:
-            continue
-
-        index = 2
-        go = global_object()
-        go.ra = ra
-        go.dec = dec
-        for d in range(ndet):
-            obj = dict()
-            obj['mag_psf'] = float(entries[index])
-            obj['magerr_psf'] = float(entries[index+1])
-            obj['x']= float(entries[index+2])
-            obj['y'] = float(entries[index+3])
-            obj['image_id'] = int(entries[index+4])
-            obj['ccd'] = int(entries[index+5])
-            obj['exposureid'] = int(entries[index+6])
-            go.objects.append(obj)
-            index += 7
-        global_objs.append(go)
-        
-    return global_objs
-            
-            
-            
-            
-            
 
 band = 'g'
 globals_dir = '/Users/bauer/surveys/DES/y1p1/equatorial'
@@ -123,7 +74,7 @@ exp_zps = None
 if use_expzps:
     exp_zps = dict()
     exp_zp_array = []
-    exp_zp_file = current_dir + '/nebencal_exposurezps_' + str(band)
+    exp_zp_file = current_dir + '/nebencal_exp_zps_' + str(band)
     file = open(exp_zp_file, 'r')
     filelines = file.readlines()
     for line in filelines:
@@ -136,7 +87,7 @@ if use_expzps:
 # read in the zero point solutions
 zps = dict()
 zp_array = []
-zp_file = current_dir + '/nebencal_zps_' + str(band)
+zp_file = current_dir + '/nebencal_img_zps_' + str(band)
 file = open(zp_file, 'r')
 filelines = file.readlines()
 for line in filelines:
@@ -296,10 +247,6 @@ for p in range(npix_wobjs):
     print "pixel {0}/{1}\r".format(p+1,npix_wobjs),
     
     pix = pix_wobjs[p]
-    
-    # filename = 'gobjs_' + str(band) + '_nside' + str(nside) + '_p' + str(pix)
-    # file = open(os.path.join(globals_dir,filename), 'r')
-    # global_objs = parse_gobjs_file(file)
     
     filename = 'gobjs_' + str(band) + '_nside' + str(nside) + '_p' + str(pix)
     file = open(os.path.join(globals_dir,filename), 'rb')
@@ -465,30 +412,6 @@ ax0.set_yscale('log')
 ax0.hist(total_magdiffsa, 100)
 pp.savefig()
 
-# plt.clf()
-# fig = plt.figure()
-# title = "Diff of mean from SDSS before cal (mean %e rms %e)" %(np.mean(meandiff_befores),np.std(meandiff_befores))
-# xlab = "Magnitudes (%s band)" %band
-# ylab = ""
-# ax0 = fig.add_subplot(1,1,1, xlabel=xlab, title=title)
-# ax0.set_yscale('log')
-# # histogram of all zps
-# # plt.clf()
-# ax0.hist(meandiff_befores, 50)
-# pp.savefig()
-# 
-# plt.clf()
-# fig = plt.figure()
-# title = "Diff of mean from SDSS after cal (mean %e rms %e)" %(np.mean(meandiff_afters),np.std(meandiff_afters))
-# xlab = "Magnitudes (%s band)" %band
-# ylab = ""
-# ax0 = fig.add_subplot(1,1,1, xlabel=xlab, title=title)
-# ax0.set_yscale('log')
-# # histogram of all zps
-# # plt.clf()
-# ax0.hist(meandiff_afters, 50)
-# pp.savefig()
-
 # histogram of RMS of individual objects before calibration
 plt.clf()
 title = "RMS of objects' mags, before cal (mean %e)" %sum_rms_before
@@ -541,28 +464,6 @@ for ccd in range(63):
 ra_array = np.array(ra_array)
 dec_array = np.array(dec_array)
 
-# mag_edge1 = int(np.min(image_before_array))
-# mag_edge2 = int(np.max(image_before_array))+1
-# mag_edges = np.arange(mag_edge1, mag_edge2,0.1)
-# 
-# dm_b_edge1 = int(10*np.min(diffb_array))/10.
-# dm_b_edge2 = int(10*np.max(diffb_array))/10. + 0.1
-# dm_before_edges = np.arange(dm_b_edge1, dm_b_edge2,0.01)
-# dm_a_edge1 = int(10*np.min(diffa_array))/10.
-# dm_a_edge2 = int(10*np.max(diffa_array))/10. + 0.1
-# dm_after_edges = np.arange(dm_a_edge1, dm_a_edge2,0.01)
-
-# H_b, xedges_b, yedges_b = np.histogram2d(image_before_array, diffb_array, bins=(mag_edges, dm_before_edges))
-# H_a, xedges_a, yedges_a = np.histogram2d(image_after_array, diffa_array, bins=(mag_edges, dm_after_edges))
-# 
-# # diff from sdss vs number of matches
-# plt.clf()
-# title = "Mean diff from SDSS per image vs. des mag (before cal)"
-# ylab = "Diff from SDSS (mags)"
-# xlab = "DES mag"
-# ax0 = fig.add_subplot(1,1,1, xlabel=xlab, title=title)
-# ax0.imshow(H_b, interpolation='nearest', extent=[xedges_b[0], xedges_b[-1], yedges_b[0], yedges_b[-1]])
-# pp.savefig()
 
 plt.clf()
 title = "Resid of mean from SDSS by ra and dec before cal"
@@ -580,61 +481,6 @@ fig.colorbar(im0)
 pp.savefig()
 
 
-# # diff from sdss vs number of matches
-# plt.clf()
-# title = "Mean diff from SDSS per image vs. des mag (before cal)"
-# ylab = "Diff from SDSS (mags)"
-# xlab = "DES mag"
-# ax0 = fig.add_subplot(1,1,1, xlabel=xlab, title=title)
-# ax0.scatter(image_before_array, diffb_array)
-# pp.savefig()
-# 
-# plt.clf()
-# title = "Mean diff from SDSS per image vs. sdss mag (before cal)"
-# print title
-# ylab = "Diff from SDSS (mags)"
-# xlab = "SDSS mag"
-# ax0 = fig.add_subplot(1,1,1, xlabel=xlab, ylabel=ylab, title=title)
-# ax0.scatter(sdss_array, diffb_array)
-# pp.savefig()
-# 
-# plt.clf()
-# title = "Mean diff from SDSS per image vs. des mag (after cal)"
-# ylab = "Diff from SDSS (mags)"
-# xlab = "DES mag"
-# ax0 = fig.add_subplot(1,1,1, xlabel=xlab, ylabel=ylab, title=title)
-# ax0.scatter(image_after_array, diffa_array)
-# pp.savefig()
-# 
-# plt.clf()
-# title = "Mean diff from SDSS per image vs. des mag (after cal)"
-# ylab = "Diff from SDSS (mags)"
-# xlab = "SDSS mag"
-# ax0 = fig.add_subplot(1,1,1, xlabel=xlab, ylabel=ylab, title=title)
-# ax0.scatter(sdss_array, diffa_array)
-# pp.savefig()
-
-# plt.clf()
-# title = "Resid of mean from SDSS by ra and dec before cal"
-# print title
-# # let's take some means
-# 
-# ylab = "RA"
-# xlab = "Dec"
-# ax3D = fig.add_subplot(111, projection='3d', xlabel=xlab, ylabel=ylab, title=title)
-# ax3D.view_init(270, 0)
-# ax3D.scatter(dec_array, ra_array, diffb_array, c=diffb_array, alpha=0.2)
-# pp.savefig()
-
-# plt.clf()
-# title = "Precam star locations"
-# xlab = "RA"
-# ylab = "Dec"
-# ax0 = fig.add_subplot(1,1,1, xlabel=xlab, ylabel=ylab, title=title)
-# ax0.scatter(precam_ras, precam_decs)
-# ax0.set_xlim([ra_array.min(), ra_array.max()])
-# ax0.set_ylim([dec_array.min(), dec_array.max()])
-# pp.savefig()
 
 plt.clf()
 title = "Precam star locations"
@@ -645,60 +491,6 @@ im0 = ax0.hexbin(precam_ras, precam_decs, bins='log')
 fig.colorbar(im0)
 pp.savefig()
 
-# plt.clf()
-# title = "Resid of mean from SDSS by ra and dec after cal"
-# print title
-# ylab = "RA"
-# xlab = "Dec"
-# ax3D = fig.add_subplot(111, projection='3d', xlabel=xlab, ylabel=ylab, title=title)
-# ax3D.view_init(270, 0)
-# ax3D.scatter(dec_array, ra_array, diffa_array, c=diffa_array)
-# pp.savefig()
-
-# ra_min = int(np.min(ra_array)-1)
-# ra_max = int(np.max(ra_array)+1)
-# dec_min = int(np.min(dec_array)-1)
-# dec_max = int(np.max(dec_array)+1)
-# n_ra_bins = (ra_max-ra_min)*2
-# n_dec_bins = (dec_max-dec_min)*2
-# ra_bins = np.arange(ra_min, ra_max, (ra_max-ra_min)/float(n_ra_bins))
-# dec_bins = np.arange(dec_min, dec_max, (dec_max-dec_min)/float(n_dec_bins))
-# ra_inds = np.digitize(ra_array, ra_bins)
-# dec_inds = np.digitize(dec_array, dec_bins)
-# 
-# hist_before = np.zeros((n_dec_bins,n_ra_bins))
-# hist_after = np.zeros((n_dec_bins,n_ra_bins))
-# ns = np.zeros((n_dec_bins,n_ra_bins))
-# for i in range(len(ra_array)):
-#     if dec_inds[i] > n_dec_bins-1 or ra_inds[i] > n_ra_bins-1:
-#         pass
-#         # print "skipping obj with indices %d %d" %(dec_inds[i], ra_inds[i])
-#     else:
-#         hist_before[dec_inds[i],ra_inds[i]] += diffb_array[i]
-#         hist_after[dec_inds[i],ra_inds[i]] += diffa_array[i]
-#         ns[dec_inds[i],ra_inds[i]] += 1.
-# for i in range(n_dec_bins):
-#     for j in range(n_ra_bins):
-#         if ns[i][j] > 0:
-#             hist_before[i][j] /= ns[i][j]
-#             hist_after[i][j] /= ns[i][j]
-# 
-# plt.clf()
-# title = "Resid of mean from SDSS by ra and dec before cal"
-# print title
-# xlab = "RA"
-# ylab = "Dec"
-# ax0 = fig.add_subplot(111, xlabel=xlab, ylabel=ylab, title=title)
-# im0 = ax0.imshow(hist_before,interpolation='bilinear',vmin=np.median(total_magdiffsb)-3*sum_rms_before,vmax=np.median(total_magdiffsb)+3*sum_rms_before,extent=[ra_min,ra_max,dec_min,dec_max])
-# fig.colorbar(im0)
-# pp.savefig()
-# 
-# plt.clf()
-# title = "Resid of mean from SDSS by ra and dec after cal"
-# ax0 = fig.add_subplot(111, xlabel=xlab, ylabel=ylab, title=title)
-# im0 = ax0.imshow(hist_after,interpolation='bilinear',vmin=np.median(total_magdiffsa)-3*sum_rms_after,vmax=np.median(total_magdiffsa)+3*sum_rms_after,extent=[ra_min,ra_max,dec_min,dec_max])
-# fig.colorbar(im0)
-# pp.savefig()
 
 plt.clf()
 title = "Resid of mean from SDSS by ra and dec before cal"
