@@ -1,0 +1,30 @@
+# what filter(s) do we want to calibrate?  this is a list.
+filters = ['g']
+
+# we want to calculate ZPs per exposure and image?  only image?
+by_exposure = True
+by_image = True
+
+# where are the inputs?
+globals_dir = '/Users/bauer/surveys/DES/y1p1/equatorial'
+precam_filename = "/Users/bauer/surveys/DES/precam/PreCamStandarStars/" + filt.upper() + ".Stand1percent.s"
+sdss_filename = "/Users/bauer/surveys/DES/y1p1/equatorial/sdss/SDSSDR10_SouthGalCap/stripe82_sample1.csv"
+zp_phot_filename = "/Users/bauer/surveys/DES/zp_phots/" + filt + ".dat"
+
+# output zp filenames
+exp_outfilename = 'nebencal_exp_zps_' + filt
+img_outfilename = 'nebencal_img_zps_' + filt
+
+# use mag_psf?  mag_aper_something?
+mag_type = 'psf'
+
+# include precam and/or sdss as standards?
+use_precam = True
+use_sdss = True
+
+# what resolution do we want to do the nebencal pixelization with?
+# we'll want an exposure pixelization courser than the image one.
+# 2: 30 degrees per side, 4: 15 degrees per side, 8:  7.3 degrees per side, 16 = 3.7 degrees, 32 = 1.8 degrees
+nside_exp = 4
+nside_img = 32 
+
