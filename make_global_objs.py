@@ -61,25 +61,19 @@ def unmatched(star):
     return True
 
 
-def make_gos(filename, band):
-
+def make_gos(filename, nside, band):
+    
     
     mag_type = 'psf'
     flux_name = "flux_" + "%s" %mag_type
     flux_err_name = "flux_err_" + "%s" %mag_type
-
+    
     max_nims = 1e6 # ick!
     max_nepochs = 20 # ick!
-    nside = 32 # 2: 30 degrees per side, 4: 15 degrees per side, 8:  7.3 degrees per side
     max_objs_per_image = 500 # so that in super-dense areas like the LMC we don't spend ages, but instead use a subset of objects.
     
     npix = healpy.nside2npix(nside)
     pixelMap = np.arange(npix)
-
-    n_ccds = 63
-    n_xspx = 8
-    n_yspx = 16
-    spxsize = 256
     
     # hdf5 
     table = None
@@ -107,10 +101,6 @@ def make_gos(filename, band):
         if not good_quality(star):
             continue
         
-        phi = star['ra']*3.1415926/180.
-        theta = (90.-star['dec'])*3.1415926/180.
-        neighbors = healpy.pixelfunc.get_neighbours(nside, theta, phi)[0]
-        
         star2 = dict()
         star2['ra'] = star['ra']
         star2['dec'] = star['dec']
@@ -129,14 +119,16 @@ def make_gos(filename, band):
         star2['gskyhot'] = star['gskyhot']
         star2['lskyhot'] = star['lskyhot']
         
-        for pix in neighbors:
-            if not pix in stars_by_img:
-                stars_by_img[pix] = dict()
-                stars_by_exp[pix] = dict()
-            
-            if not star['imageid'] in stars_by_img[pix]:
-                stars_by_img[pix][star['imageid']] = []
-            stars_by_img[pix][star['imageid']].append(star2)
+        phi = star['ra']*3.1415926/180.
+        theta = (90.-star['dec'])*3.1415926/180.
+        pix = healpy.pixelfunc.ang2pix(nside, theta, phi)
+        if not pix in stars_by_img:
+            stars_by_img[pix] = dict()
+            stars_by_exp[pix] = dict()
+        
+        if not star['imageid'] in stars_by_img[pix]:
+            stars_by_img[pix][star['imageid']] = []
+        stars_by_img[pix][star['imageid']].append(star2)
     
     
     print "%d pixels" %len(stars_by_img.keys())
@@ -211,6 +203,8 @@ def make_gos(filename, band):
 
 def main():
     filt = 'y'
+    nside = 32 # 2: 30 degrees per side, 4: 15 degrees per side, 8:  7.3 degrees per side
+    
     print "Making global objects from DES, filter %s!" %filt
     if len(sys.argv) < 2:
         print "Usage: make_global_objs.py filename"
@@ -220,7 +214,7 @@ def main():
     filename = sys.argv[1]
     print "Using file %s" %filename
     
-    make_gos( filename, filt )
+    make_gos( filename, nside, filt )
     
 
 

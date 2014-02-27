@@ -75,12 +75,75 @@ def unmatched(star):
         return False
     return True
 
+def read_precam( precam_stars, precam_map, config, band ):
+    precam_file = open( config['general']['precam_filename'], 'r' )
+    # read in the precam standards and make an index
+    count = 0
+    for line in precam_file:
+        entries = line.split(" ")
+        if( entries[0][0] == '#' ):
+            continue
+        star = dict()
+        star['ra'] = float(entries[1])
+        star['dec'] = float(entries[2])
+        star['mag_psf'] = float(entries[3])
+        star['magerr_psf'] = 0.02 #float(entries[6])
+        star['x_image'] = 0.
+        star['y_image'] = 0.
+        star['ccd'] = 0
+        star['image_id'] = 1
+        star['exposureid'] = 1
+        star['band'] = band
+        star['matched'] = False
+        precam_stars.append(star)
+        precam_map.insert( count, (star['ra'],star['dec'],star['ra'],star['dec']) )
+        count += 1
+    print "Read in %d PreCam standards" %count
+    
+
+def read_sdss( sdss_stars, sdss_map, config, band ):
+    sdssfile = open(config['general']['sdss_filename'], 'r')
+    count=0
+    for line in sdssfile:
+        entries = line.split(",")
+        # header!
+        if entries[0] == 'id':
+            continue
+        sdss_obj = dict()
+        sdss_obj['ra'] = float(entries[2])
+        sdss_obj['dec'] = float(entries[3])
+        if band == 'u':
+            sdss_obj['mag_psf'] = float(entries[4])
+        elif band == 'g':
+            sdss_obj['mag_psf'] = float(entries[5])
+        elif band == 'r':
+            sdss_obj['mag_psf'] = float(entries[6])
+        elif band == 'i':
+            sdss_obj['mag_psf'] = float(entries[7])
+        elif band == 'z':
+            sdss_obj['mag_psf'] = float(entries[8])
+        elif band == 'y':
+            sdss_obj['mag_psf'] = float(entries[9])
+        else:
+            print "Um, while parsing SDSS objects, band = %s" %band
+            exit(1)
+        sdss_obj['band'] = band
+        sdss_obj['magerr_psf'] = 0.02
+        sdss_obj['x_image'] = 0.
+        sdss_obj['y_image'] = 0.
+        sdss_obj['ccd'] = 0
+        sdss_obj['image_id'] = 1
+        sdss_obj['exposureid'] = 1
+        sdss_obj['matched'] = False
+        if sdss_obj['mag_psf'] > 0.:
+            sdss_stars.append(sdss_obj)
+            sdss_map.insert( count, (sdss_obj['ra'],sdss_obj['dec'],sdss_obj['ra'],sdss_obj['dec']) )
+            count += 1
+    print "Read in %d SDSS standards" %count
 
 def nebencalibrate_pixel( inputs ):
     
-    [p, nside, band, pix_wobjs, precal, precam_stars, precam_map, globals_dir, id_string] = inputs
-    
-    pix = pix_wobjs[p]
+    [pix, nside, nside_file, band, precal, precam_stars, precam_map, globals_dir, id_string, max_dets] = inputs
     
     use_precam = 0
     if len(precam_stars) > 0:
@@ -97,7 +160,6 @@ def nebencalibrate_pixel( inputs ):
     has_precam = 0
     p_vector = None
     
-    print "Starting pixel %d" %(pix)
     
     # while we're at it, add stuff to the matrices so we don't have to loop over global objects.
     
@@ -120,27 +182,110 @@ def nebencalibrate_pixel( inputs ):
     precam_count = 0
     
     
-    # read the global objects in from the file
-    filename = 'gobjs_' + str(band) + '_nside' + str(nside) + '_p' + str(pix)
-    file = open(os.path.join(globals_dir,filename), 'rb')
-    global_objs_list = cPickle.load(file)
-    file.close()
+    # read the global objects in from the files.
+    global_objs_list = []
+    
+    # if the pixelization resolution is the same as the file convention, then this is easy.
+    if nside == nside_file:
+        filename = 'gobjs_' + str(band) + '_nside' + str(nside) + '_p' + str(pix)
+        # if there's no data for this pixel, forget it: nothing to calibrate.
+        if not os.path.isfile(os.path.join(globals_dir,filename)):
+            return None, None, None
+        file = open(os.path.join(globals_dir,filename), 'rb')
+        global_objs_list = cPickle.load(file)
+        file.close()
+        
+        # now include the 4 nearest neighboring pixels.
+        all_neighbors = healpy.pixelfunc.get_all_neighbours(nside, pix)
+        for pixn in range(0,8,2):
+            filename = 'gobjs_' + str(band) + '_nside' + str(nside) + '_p' + str(all_neighbors[pixn])
+            if os.path.isfile(filename):
+                file = open(os.path.join(globals_dir,filename), 'rb')
+                global_objs_list.extend(cPickle.load(file))
+                file.close()
+    
+    elif nside > nside_file:
+        print "ERROR: Need to have global objects saved in a pixelization that is not lower-resolution than what you're using"
+        throw
+    
+    elif nside == 0:
+        # just read in everything!!
+        npix_file = 12*nside_file*nside_file
+        for pix in range(npix_file):
+            filename = 'gobjs_' + str(band) + '_nside' + str(nside_file) + '_p' + str(pix)
+            if os.path.isfile(os.path.join(globals_dir,filename)):
+                file = open(os.path.join(globals_dir,filename), 'rb')
+                global_objs_list.extend(cPickle.load(file))
+                file.close()
+        if len(global_objs_list) == 0:
+            print "ERROR: no global objects found for filter %s, file nside %d" %(band, nside_file)
+            throw;
+        
+    else:
+        # what nside_file pixels correspond to our central and neighbor pixels?
+        # this snazzy trick is from the healpy source code.  works for the nest scheme only.
+        npix_lowres = 12*nside*nside
+        npix_file = 12*nside_file*nside_file
+        rat2 = npix_file/npix_lowres
+        map_file = np.arange(npix_file)
+        map_lowres = map_file.reshape(npix_lowres,rat2)
+        
+        # so what is our pixel in nest scheme, low resolution?
+        pix_lowres_nest = healpy.pixelfunc.ring2nest(nside,pix)
+        # this is made up of the following pixels.  this is the snazzy trick.
+        pixels_nest = map_lowres[pix_lowres_nest,:]
+        # convert back to ring
+        pixels_ring = healpy.pixelfunc.nest2ring(nside_file,pixels_nest)
+        # and read them from the file.
+        for pixel_ring in pixels_ring:
+            filename = 'gobjs_' + str(band) + '_nside' + str(nside_file) + '_p' + str(pixel_ring)
+            # if there's no data for this pixel, forget it: nothing to calibrate.
+            if os.path.isfile(os.path.join(globals_dir,filename)):
+                file = open(os.path.join(globals_dir,filename), 'rb')
+                global_objs_list.extend(cPickle.load(file))
+                file.close()
+        # if there weren't any objects for this low-res pixel, then we're done.
+        if len(global_objs_list) == 0:
+            return None, None, None
+            
+        # now include the four nearest neighbors
+        all_neighbors = healpy.pixelfunc.get_all_neighbours(nside, pix_lowres_nest, nest=True)
+        for pixn in range(0,8,2):
+            # what are these in the high res pixels?
+            pixels_nest = map_lowres[all_neighbors[pixn],:]
+            pixels_ring = healpy.pixelfunc.nest2ring(nside_file,pixels_nest)
+            for pixel_ring in pixels_ring:
+                filename = 'gobjs_' + str(band) + '_nside' + str(nside_file) + '_p' + str(pixel_ring)
+                # if there's no data for this pixel, forget it: nothing to calibrate.
+                if os.path.isfile(os.path.join(globals_dir,filename)):
+                    file = open(os.path.join(globals_dir,filename), 'rb')
+                    global_objs_list.extend(cPickle.load(file))
+                    file.close()
+        
+    
+    print "Starting pixel %d" %(pix)
+    
     max_matrix_size = len(global_objs_list)*max_nepochs
     a_matrix_xs = np.zeros(max_matrix_size)
     a_matrix_ys = np.zeros(max_matrix_size)
     a_matrix_vals = np.zeros(max_matrix_size)
 
     # is it worth finding out max_nimgs correctly?  YES.
+    # also, check to see if there are too many objects per image/exposure
     imgids = dict()
+    img_ndets = dict()
+    img_errs = dict()
+    max_errors = dict()
     ndet_for_cal = 0
     ndet_for_summi = 0
+    worst_ok_err = dict()
     for go in global_objs_list:
 
         # cut out objects that are bad quality!
         go.objects = filter(good_quality, go.objects)
         if len(go.objects) < 2:
             continue
-
+        
         for obj in go.objects:
             # if bad quality (or precam), don't use for calibration
             if standard_quality(obj):
@@ -149,9 +294,22 @@ def nebencalibrate_pixel( inputs ):
             else:
                 obj['for_mean'] = False
             ndet_for_cal += 1
-            image_id = obj[id_string] #int(entries[i])
+            image_id = obj[id_string]
             imgids[image_id] = True
-
+            
+            if obj[id_string] in img_ndets:
+                img_ndets[obj[id_string]] += 1
+                if obj['magerr_psf'] < worst_ok_err[obj[id_string]][1]:
+                    # replace the current worst error in the list
+                    img_errs[obj[id_string]][worst_ok_err[obj[id_string]][0]] = obj['magerr_psf']
+                    # now what's the worst?
+                    max_index = np.argmax(img_errs[obj[id_string]])
+                    worst_ok_err[obj[id_string]] = [max_index, img_errs[obj[id_string]][max_index]]
+            else:
+                img_ndets[obj[id_string]] = 0
+                img_errs[obj[id_string]] = np.ones(max_dets) #[obj['magerr_psf']]
+                worst_ok_err[obj[id_string]] = [0,1.0] # index, value
+            
         if use_precam:
             ra_match_radius = match_radius/math.cos(go.dec*math.pi/180.)
             dec_match_radius = match_radius
@@ -164,11 +322,18 @@ def nebencalibrate_pixel( inputs ):
                 precam_star['for_mean'] = False
                 go.objects.append(precam_star)
                 imgids[1] = True
+                worst_ok_err[1] = [0,1.0] # don't cut any precam objects
                 precam_count += 1
 
     max_nimgs = len(imgids.keys())
     
+    
     for go in global_objs_list:
+        
+        if len(go.objects) < 2:
+            continue
+        
+        go.objects = [obj for obj in go.objects if obj['magerr_psf'] < worst_ok_err[obj[id_string]][1]]
         
         if len(go.objects) < 2:
             continue
@@ -393,26 +558,13 @@ def nebencalibrate_pixel( inputs ):
 
 
 
-def nebencalibrate( band, nside, id_string, precam_map, precam_stars, precal, globals_dir ):
+def nebencalibrate( band, nside, nside_file, id_string, precam_map, precam_stars, precal, globals_dir, require_standards=False, max_dets=1e9 ):
     
-    # first let's just see which pixels are populated so that we can loop over only those.
+    if len(precam_stars) == 0 and require_standards:
+        print "nebencalibrate: No standards, yet you are requiring standards!"
+        raise Exception
+    
     npix = healpy.nside2npix(nside)
-    pix_wobjs = []
-    pix_dict = dict()
-
-    # which pixels exist?  check file names.
-    dir_files = os.listdir(globals_dir)
-    for filename in dir_files:
-        if re.match('gobjs_' + str(band) + '_nside' + str(nside) + '_p', filename) is not None:
-            pixel_match = re.search('p(\d+)', filename)
-            if pixel_match is None:
-                print "Problem parsing pixel number"
-            pixel = int(pixel_match.group()[1:])
-            pix_dict[pixel] = True
-
-    pix_wobjs = sorted(pix_dict.keys())
-    npix_wobjs = len(pix_wobjs)
-    print "%d pixels have data" %npix_wobjs
     
     p_vector = []
     image_id_dict = []
@@ -420,21 +572,28 @@ def nebencalibrate( band, nside, id_string, precam_map, precam_stars, precal, gl
         p_vector.append(None)
         image_id_dict.append(dict())
         
+    # nebencalibrate the pixels!
     has_precam = dict()
+    pix_wobjs = []
     inputs= []
-    for p in range(npix_wobjs):
-        inputs.append( [p, nside, band, pix_wobjs, precal, precam_stars, precam_map, globals_dir, id_string] )
-        image_id_dict[pix_wobjs[p]], p_vector[pix_wobjs[p]], has_precam[pix_wobjs[p]] = nebencalibrate_pixel(inputs[p])
-     
+    for p in range(npix):
+        inputs.append( [p, nside, nside_file, band, precal, precam_stars, precam_map, globals_dir, id_string, max_dets] )
+        image_id_dict[p], p_vector[p], has_precam[p] = nebencalibrate_pixel(inputs[p])
+        if require_standards and not has_precam[p] and p_vector[p] is not None:
+            print "No standards found in pixel %d for nside=%d.  Degrading!" %(p,nside)
+            return 'degrade'
+        if p_vector[p] is not None:
+            pix_wobjs.append(p)
+    npix_wobjs = len(pix_wobjs)
     
     # now do another ubercalibration to make sure the pixels are normalized to each other
     # the measurements are now the difference between two zps calculated for the same image, during different pixels' ubercalibrations.
-    # what is the "correct" value?  the mean, since that will bring the different zps to the same value and that's what matters?
-
+    
     # first, get a superlist of image ids
     imagelist = []
     for pix in range(npix):
-        imagelist.extend(image_id_dict[pix].keys())
+        if image_id_dict[pix] is not None:
+            imagelist.extend(image_id_dict[pix].keys())
     imagelist = list(set(imagelist))
     print "There are %d images in total." %len(imagelist)
     
@@ -453,20 +612,15 @@ def nebencalibrate( band, nside, id_string, precam_map, precam_stars, precal, gl
     nzps_tot = 0
     pix_id_count = -1
     
-    print "looping through imagelist, e.g."
-    print imagelist[0]
-    print "max matrix size = %d" %max_matrix_size
-
     for imageid in imagelist:
         zps = []
         pix_id_matrix2 = np.zeros([npix_wobjs,npix_wobjs], dtype=np.int)
         pix_ids2 = np.zeros(npix_wobjs, dtype=np.int)
-
-        nzps = 0
         
+        nzps = 0
         for pix_id in range(npix_wobjs):
             pix = pix_wobjs[pix_id]
-            if imageid in image_id_dict[pix] and p_vector[pix][image_id_dict[pix][imageid]] != 0.:
+            if imageid in image_id_dict[pix] and (imageid == 1 or p_vector[pix][image_id_dict[pix][imageid]] != 0.):
                 zps.append(p_vector[pix][image_id_dict[pix][imageid]])
                 
                 try:
@@ -504,12 +658,11 @@ def nebencalibrate( band, nside, id_string, precam_map, precam_stars, precal, gl
         a_submatrix = coo_matrix(a_submatrix)
 
         indices = np.where(a_submatrix.data != 0.)[0]
-        # print "indices has length %d, nzps = %d, matrix size = %d out of %d max" %(len(indices), nzps, matrix_size, max_matrix_size)
 
         if( matrix_size+len(indices) > max_matrix_size ):
-            a_matrix_xs.extend(np.zeros(max_matrix_size))
-            a_matrix_ys.extend(np.zeros(max_matrix_size))
-            a_matrix_vals.extend(np.zeros(max_matrix_size))
+            np.hstack((a_matrix_xs,np.zeros(max_matrix_size)))
+            np.hstack((a_matrix_ys,np.zeros(max_matrix_size)))
+            np.hstack((a_matrix_vals,np.zeros(max_matrix_size)))
             max_matrix_size += max_matrix_size
 
         a_matrix_xs[matrix_size:(matrix_size+len(indices))] = a_submatrix.col[indices]
@@ -567,11 +720,7 @@ def nebencalibrate( band, nside, id_string, precam_map, precam_stars, precal, gl
         n_rms += 1
         
     print "Mean RMS of the zps after correction: %e" %(sum_rms/n_rms)
-
-
     
-    # now compile all the info into one zp per image.
-    # for each image, find the p_vector zps and add the p1_vector zps, then take the (TBD: WEIGHTED) mean
     
     # if using precam standards, normalize these zps to the pixels that had precam objects in them
     if len(precam_stars) > 0:
@@ -589,7 +738,9 @@ def nebencalibrate( band, nside, id_string, precam_map, precam_stars, precal, gl
         print "Normalizing all zps by the PreCam mean of %f from %d zps" %(precam_zp, precam_nzp)
         p1_vector -= precam_zp
     
-    # outfile = open( outfilename, 'w' )
+    
+    # now compile all the info into one zp per image.
+    # for each image, find the p_vector zps and add the p1_vector zps, then take the (TBD: WEIGHTED?) mean
     zeropoints = dict()
     for imageid in imagelist:
         zp_tot = 0.
@@ -599,24 +750,19 @@ def nebencalibrate( band, nside, id_string, precam_map, precam_stars, precal, gl
             if imageid in image_id_dict[pix]:
                 zp_tot += p_vector[pix][image_id_dict[pix][imageid]] + p1_vector[pix_id_dict2[pix_id]] 
                 zp_n += 1
-
         zp_tot /= zp_n
         zeropoints[imageid] = zp_tot
-        # outfile.write( "%d %e\n" %(imageid, zp_tot) );
-    # outfile.close()
     
     return zeropoints
 
 
-def calibrate_by_filter(config, band, by_exposure=True, by_image=True):
+def calibrate_by_filter(config):
     
+    band = config['general']['filter']
     print "\nCalibrating filter " + band + "!\n"
     
-    flux_name = "flux_" + "%s" %config['mag_type']
-    flux_err_name = "flux_err_" + "%s" %config['mag_type']
-    
     # read in the nominal ccd offsets (zp_phots), which will be our starting point
-    zp_phot_file = open( config['zp_phot_filename'], 'r' )
+    zp_phot_file = open( config['general']['zp_phot_filename'], 'r' )
     zp_phots = dict()
     for line in zp_phot_file:
         entries = line.split()
@@ -626,95 +772,42 @@ def calibrate_by_filter(config, band, by_exposure=True, by_image=True):
     # include precam fake entry
     zp_phots[0] = 0.
     
-    
+    # read in any catalogs we would like to treat as standards (i.e. precam, sdss...)
     precam_stars = []
     precam_map = index.Index()
-    if config['use_precam']:
-        precam_file = open( config['precam_filename'], 'r' )
-        # read in the precam standards and make an index
-        count = 0
-        for line in precam_file:
-            entries = line.split(" ")
-            if( entries[0][0] == '#' ):
-                continue
-            star = dict()
-            star['ra'] = float(entries[1])
-            star['dec'] = float(entries[2])
-            star['mag_psf'] = float(entries[3])
-            star['magerr_psf'] = 0.02 #float(entries[6])
-            star['x_image'] = 0.
-            star['y_image'] = 0.
-            star['ccd'] = 0
-            star['image_id'] = 1
-            star['exposureid'] = 1
-            star['band'] = band
-            star['matched'] = False
-            precam_stars.append(star)
-            precam_map.insert( count, (star['ra'],star['dec'],star['ra'],star['dec']) )
-            count += 1
-        print "Read in %d PreCam standards" %count
-        
-    if config['use_sdss']:
-        sdssfile = open(config['sdss_filename'], 'r')
-        count=0
-        for line in sdssfile:
-            entries = line.split(",")
-            # header!                                                                   
-            if entries[0] == 'id':
-                continue
-            sdss_obj = dict()
-            sdss_obj['ra'] = float(entries[2])
-            sdss_obj['dec'] = float(entries[3])
-            if band == 'u':
-                sdss_obj['mag_psf'] = float(entries[4])
-            elif band == 'g':
-                sdss_obj['mag_psf'] = float(entries[5])
-            elif band == 'r':
-                sdss_obj['mag_psf'] = float(entries[6])
-            elif band == 'i':
-                sdss_obj['mag_psf'] = float(entries[7])
-            elif band == 'z':
-                sdss_obj['mag_psf'] = float(entries[8])
-            elif band == 'y':
-                sdss_obj['mag_psf'] = float(entries[9])
+    if config['general']['use_precam']:
+        read_precam( precam_stars, precam_map, config, band )
+    if config['general']['use_sdss']:
+        read_sdss( precam_stars, precam_map, config, band )
+    
+    
+    # calibrate!
+    
+    # use the zp_phots as a starting point to our calibration
+    precal = [[zp_phots, 'ccd', np.median(zp_phots.values())]]
+    
+    for calibration in config['calibrations']:
+        print "\nStarting calibration on %s\n" %calibration['id_string']
+        new_zps = None
+        success = False
+        while not success:
+            new_zps = nebencalibrate( band, calibration['nside'], config['general']['nside_file'], calibration['id_string'], precam_map, precam_stars, precal, config['general']['globals_dir'], require_standards=calibration['require_standards'], max_dets=calibration['max_dets'] )
+            if new_zps == 'degrade':
+                if calibration['nside'] == 1:
+                    calibration['nside'] = 0
+                calibration['nside'] /= 2
+                print "Now trying nside=%d" %calibration['nside']
             else:
-                print "Um, while parsing SDSS objects, band = %s" %band
-                exit(1)
-            sdss_obj['band'] = band
-            sdss_obj['magerr_psf'] = 0.02
-            sdss_obj['x_image'] = 0.
-            sdss_obj['y_image'] = 0.
-            sdss_obj['ccd'] = 0
-            sdss_obj['image_id'] = 1
-            sdss_obj['exposureid'] = 1
-            sdss_obj['matched'] = False
-            if sdss_obj['mag_psf'] > 0.:
-                precam_stars.append(sdss_obj)
-                precam_map.insert( count, (sdss_obj['ra'],sdss_obj['dec'],sdss_obj['ra'],sdss_obj['dec']) )
-                count += 1
-        print "Read in %d SDSS standards" %count
-    
-    
-    if by_exposure:
-        print "\nStarting exposure calibration\n"
-        precal = [[zp_phots,'ccd', np.median(zp_phots.values())]]
-        exp_zps = nebencalibrate( band, config['nside_exp'], 'exposureid', precam_map, precam_stars, precal, config['globals_dir'] )
-        
-        outfile = open( config['exp_outfilename'], 'w' )
-        for zp_id in exp_zps.keys():
-            outfile.write( "%d %e\n" %(zp_id, exp_zps[zp_id]) );
+                success = True
+                
+        outfile = open( calibration['outfilename'], 'w' )
+        for zp_id in new_zps.keys():
+            outfile.write( "%d %e\n" %(zp_id, new_zps[zp_id]) );
         outfile.close()
         
-    if by_image:
-        print "\nStarting image calibration\n"
-        precal.append([exp_zps,'exposure_id', np.median(exp_zps.values())])
-        img_zps = nebencalibrate( band, config['nside_img'], 'image_id', precam_map, precam_stars, precal, config['globals_dir'] )
-    
-        outfile = open( config['img_outfilename'], 'w' )
-        for zp_id in img_zps.keys():
-            outfile.write( "%d %e\n" %(zp_id, img_zps[zp_id]) );
-        outfile.close()
-    
+        # so that we use these as input to the following calibration(s)
+        precal.append([new_zps, calibration['id_string'], np.median(new_zps.values())])
+        
 
 def main():
     
@@ -734,8 +827,7 @@ def main():
     
     config_file = open(config_filename)
     config = yaml.load(config_file)
-    for filt in config['filters']:
-        calibrate_by_filter( config, filt, config['by_exposure'], config['by_image'] )
+    calibrate_by_filter( config )
 
 
 

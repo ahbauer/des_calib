@@ -16,7 +16,6 @@ from rtree import index
 from operator import itemgetter, attrgetter
 # from scipy.stats import scoreatpercentile
 
-import match_catalogs
 src_dir = '/Users/bauer/software/python'
 sys.path.append(src_dir)
 from pyspherematch import spherematch
@@ -43,14 +42,11 @@ class object(object):
 
 band = 'g'
 globals_dir = '/Users/bauer/surveys/DES/y1p1/equatorial'
-current_dir = os.getcwd() #globals_dir + '/' + band + '_results/newnorm/'
-use_expzps = True
+current_dir = os.getcwd()
+use_expzps = False
 
 nside = 32
 n_ccds = 63
-spxsize = 256
-n_xspx = 8
-n_yspx = 16
 match_radius = 1.0/3600.
 
 plot_file = 'nebencal_truth_plots_' + band + '.pdf'
@@ -110,8 +106,8 @@ for i in range(21,83,1):
     fp_xindices.append(int(entries[3])-1)
     fp_xs.append(66.6667*(float(entries[4])-211.0605) - 1024) # in pixels
     fp_ys.append(66.6667*float(entries[5]) - 2048)
-fp_ys.append(fp_xs[-1])
-fp_xs.append(fp_ys[-1])
+# fp_ys.append(fp_xs[-1])
+# fp_xs.append(fp_ys[-1])
 fp_yindices.append(fp_yindices[-1])
 fp_xindices.append(fp_xindices[-1])
 fp_xoffsets = [4,3,2,1,1,0,0,1,1,2,3,4]
@@ -229,18 +225,13 @@ hist_count = 0
 total_magdiffsb = []
 total_magdiffsa = []
 
-plot_resids_b = []
-plot_resids_a = []
-plot_resid_ns = []
 plot_resids_b2 = []
 plot_resids_a2 = []
+plot_resids_c2 = []
+plot_resids_d2 = []
 plot_resids_b2_xs = []
 plot_resids_b2_ys = []
 
-for ccd in range(n_ccds):
-    plot_resids_b.append(np.zeros((n_yspx,n_xspx)))
-    plot_resids_a.append(np.zeros((n_yspx,n_xspx)))
-    plot_resid_ns.append(np.zeros((n_yspx,n_xspx)))
     
 for p in range(npix_wobjs):
     
@@ -270,13 +261,16 @@ for p in range(npix_wobjs):
         ccds = np.zeros(ndet, dtype='int')
         xs = np.zeros(ndet)
         ys = np.zeros(ndet)
-        for d in range(ndet):
+        d=0
+        for d0 in range(ndet):
             mag_psf = go.objects[d]['mag_psf']
             magerr_psf = go.objects[d]['magerr_psf']
             xs[d]= go.objects[d]['x_image']
             ys[d] = go.objects[d]['y_image']
             image_id = go.objects[d]['image_id']
-            ccd = go.objects[d]['ccd']
+            if image_id == 1:
+                continue
+            ccd = go.objects[d]['ccd']-1
             exposureid = go.objects[d]['exposureid']
             image_ccds[image_id] = ccd
             ccds[d] = ccd
@@ -308,7 +302,8 @@ for p in range(npix_wobjs):
                 image_afters[image_id] = mags_after[d]
                 sdss_mags[image_id] = sdss_match.mag
                 image_ns[image_id] = 1
-
+            d+=1
+        ndet=d
         mags_before = mags_before[0:ndet]
         mags_after = mags_after[0:ndet]
         mag_errors2 = mag_errors2[0:ndet]
@@ -322,8 +317,8 @@ for p in range(npix_wobjs):
         sum_m_after = (mags_after*invsigma_array).sum() / sum_invsigma2
         
         for d in range(ndet):
-            superpix_x = int(xs[d]/spxsize)
-            superpix_y = int(ys[d]/spxsize)
+            plot_resids_c2.append(mags_before[d]-sum_m_before)
+            plot_resids_d2.append(mags_after[d]-sum_m_after)
             plot_resids_b2.append(mags_before[d] - sdss_match.mag)
             plot_resids_b2_xs.append(xs[d] + fp_xs[ccds[d]])
             plot_resids_b2_ys.append(ys[d] + fp_ys[ccds[d]])
@@ -331,21 +326,15 @@ for p in range(npix_wobjs):
             try:
                 image_resids_b[iids[d]] += mags_before[d] - sdss_match.mag
                 image_resids_a[iids[d]] += mags_after[d] - sdss_match.mag
-                plot_resids_b[ccds[d]][superpix_y,superpix_x] += mags_before[d] - sdss_match.mag
-                plot_resids_a[ccds[d]][superpix_y,superpix_x] += mags_after[d] - sdss_match.mag
-                plot_resid_ns[ccds[d]][superpix_y,superpix_x] += 1
             except KeyError:
                 image_resids_b[iids[d]] = mags_before[d] - sdss_match.mag
                 image_resids_a[iids[d]] = mags_after[d] - sdss_match.mag
-                plot_resids_b[ccds[d]][superpix_y,superpix_x] = mags_before[d] - sdss_match.mag
-                plot_resids_a[ccds[d]][superpix_y,superpix_x] = mags_after[d] - sdss_match.mag
-                plot_resid_ns[ccds[d]][superpix_y,superpix_x] = 1
 
         # calculate rms before and after
         rms_before = np.std(mags_before-sdss_match.mag)
         rms_after = np.std(mags_after-sdss_match.mag)
-        meandiff_before = sum_m_before - sdss_match.mag
-        meandiff_after = sum_m_after - sdss_match.mag
+        # meandiff_before = sum_m_before - sdss_match.mag
+        # meandiff_after = sum_m_after - sdss_match.mag
         # if meandiff_after < -3.:
         #     print "%f %f %f %f %d" %(sum_m_before, sum_m_after, zps[image_id], sdss_match.mag, image_id)
         sum_rms_before += rms_before
@@ -353,8 +342,8 @@ for p in range(npix_wobjs):
         
         rms_befores[hist_count] = rms_before
         rms_afters[hist_count] = rms_after
-        meandiff_befores[hist_count] = meandiff_before
-        meandiff_afters[hist_count] = meandiff_after
+        # meandiff_befores[hist_count] = meandiff_before
+        # meandiff_afters[hist_count] = meandiff_after
         hist_count += 1
         
         n_rms += 1
@@ -373,12 +362,6 @@ for iid in image_ras.keys():
     image_afters[iid] /= image_ns[iid]
     sdss_mags[iid] /= image_ns[iid]
 
-for ccd in range(n_ccds):
-    for x in range(n_xspx):
-        for y in range(n_yspx):
-            if plot_resid_ns[ccd][y,x] > 0:
-                plot_resids_b[ccd][y,x] /= plot_resid_ns[ccd][y,x]
-                plot_resids_a[ccd][y,x] /= plot_resid_ns[ccd][y,x]
 
 print
 print "RMS before: %f" %sum_rms_before
@@ -388,15 +371,15 @@ print "RMS after: %f" %sum_rms_after
 if hist_count > 100000:
     rms_befores = random.sample(rms_befores, 100000)
     rms_afters = random.sample(rms_afters, 100000)
-    meandiff_befores = random.sample(meandiff_befores, 100000)
-    meandiff_afters = random.sample(meandiff_afters, 100000)
+    # meandiff_befores = random.sample(meandiff_befores, 100000)
+    # meandiff_afters = random.sample(meandiff_afters, 100000)
 
 if len(total_magdiffsa) > 100000:
         total_magdiffsb = random.sample(total_magdiffsb, 100000)
         total_magdiffsa = random.sample(total_magdiffsa, 100000)
 
 fig = plt.figure()
-title = "Total mag diff before calibration, med %e" %np.median(total_magdiffsb)
+title = "Total mag diff before calibration, med %e, rms %e" %(np.median(total_magdiffsb), np.std(total_magdiffsb))
 print title
 ax0 = fig.add_subplot(1,1,1, title=title)
 ax0.set_yscale('log')
@@ -405,7 +388,7 @@ pp.savefig()
 
 plt.clf()
 fig = plt.figure()
-title = "Total mag diff after calibration, med %e" %np.median(total_magdiffsa)
+title = "Total mag diff after calibration, med %e, rms %e" %(np.median(total_magdiffsa), np.std(total_magdiffsa))
 print title
 ax0 = fig.add_subplot(1,1,1, title=title)
 ax0.set_yscale('log')
@@ -464,19 +447,21 @@ for ccd in range(63):
 ra_array = np.array(ra_array)
 dec_array = np.array(dec_array)
 
+mdiffstdb = np.std(total_magdiffsb)
+mdiffstda = np.std(total_magdiffsa)
 
 plt.clf()
 title = "Resid of mean from SDSS by ra and dec before cal"
 ax0 = fig.add_subplot(1,1,1, xlabel=xlab, ylabel=ylab, title=title)
 ylab = "DES - SDSS mag"
-im0 = ax0.hexbin(image_before_array, diffb_array, bins='log', extent=(np.min(image_before_array), np.max(image_before_array), np.median(total_magdiffsb)-5*sum_rms_before, np.median(total_magdiffsb)+5*sum_rms_before)) 
+im0 = ax0.hexbin(image_before_array, diffb_array, bins='log', extent=(np.min(image_before_array), np.max(image_before_array), np.median(total_magdiffsb)-3*mdiffstdb, np.median(total_magdiffsb)+3*mdiffstdb)) 
 fig.colorbar(im0)
 pp.savefig()
 
 plt.clf()
 title = "Resid of mean from SDSS by ra and dec after cal"
 ax0 = fig.add_subplot(1,1,1, xlabel=xlab, ylabel=ylab, title=title)
-im0 = ax0.hexbin(image_after_array, diffa_array, bins='log', extent=(np.min(image_after_array), np.max(image_after_array), np.median(total_magdiffsa)-5*sum_rms_after, np.median(total_magdiffsa)+5*sum_rms_after)) 
+im0 = ax0.hexbin(image_after_array, diffa_array, bins='log', extent=(np.min(image_after_array), np.max(image_after_array), np.median(total_magdiffsa)-3*mdiffstda, np.median(total_magdiffsa)+3*mdiffstda)) 
 fig.colorbar(im0)
 pp.savefig()
 
@@ -487,7 +472,7 @@ title = "Precam star locations"
 xlab = "RA"
 ylab = "Dec"
 ax0 = fig.add_subplot(1,1,1, xlabel=xlab, ylabel=ylab, title=title)
-im0 = ax0.hexbin(precam_ras, precam_decs, bins='log') 
+im0 = ax0.hexbin(precam_ras, precam_decs, bins='log',extent=(np.min(ra_array),np.max(ra_array),np.min(dec_array),np.max(dec_array))) 
 fig.colorbar(im0)
 pp.savefig()
 
@@ -497,7 +482,7 @@ title = "Resid of mean from SDSS by ra and dec before cal"
 xlab = "RA"
 ylab = "Dec"
 ax0 = fig.add_subplot(111, xlabel=xlab, ylabel=ylab, title=title)
-im0 = ax0.hexbin(ra_array, dec_array, diffb_array, vmin=np.median(total_magdiffsb)-3*sum_rms_before, vmax=np.median(total_magdiffsb)+3*sum_rms_before)
+im0 = ax0.hexbin(ra_array, dec_array, diffb_array, vmin=np.median(total_magdiffsb)-3*mdiffstdb, vmax=np.median(total_magdiffsb)+3*mdiffstdb)
 fig.colorbar(im0)
 pp.savefig()
 
@@ -506,24 +491,43 @@ title = "Resid of mean from SDSS by ra and dec after cal"
 xlab = "RA"
 ylab = "Dec"
 ax0 = fig.add_subplot(111, xlabel=xlab, ylabel=ylab, title=title)
-im0 = ax0.hexbin(ra_array, dec_array, diffa_array, vmin=np.median(total_magdiffsa)-3*sum_rms_after, vmax=np.median(total_magdiffsa)+3*sum_rms_after)
+im0 = ax0.hexbin(ra_array, dec_array, diffa_array, vmin=np.median(total_magdiffsa)-3*mdiffstda, vmax=np.median(total_magdiffsa)+3*mdiffstda)
 fig.colorbar(im0)
 pp.savefig()
 
 
 plt.clf()
 fig = plt.figure()
-title = "Residual of indiv meas by CCD before cal"
+title = "Residual of indiv meas from SDSS before cal"
 ax0 = fig.add_subplot(1,1,1, title=title)
+#mdiffstdb
 im0 = ax0.hexbin(plot_resids_b2_xs, plot_resids_b2_ys, plot_resids_b2, gridsize=400, reduce_C_function = np.median, vmin=np.median(total_magdiffsb)-3*sum_rms_before, vmax=np.median(total_magdiffsb)+3*sum_rms_before) 
 fig.colorbar(im0)
 pp.savefig()
 
 plt.clf()
 fig = plt.figure()
-title = "Residual of indiv meas by CCD after cal"
+title = "Residual of indiv meas from SDSS after cal"
 ax0 = fig.add_subplot(1,1,1, title=title)
+#mdiffstda
 im0 = ax0.hexbin(plot_resids_b2_xs, plot_resids_b2_ys, plot_resids_a2, gridsize=400, reduce_C_function = np.median, vmin=np.median(total_magdiffsa)-3*sum_rms_after, vmax=np.median(total_magdiffsa)+3*sum_rms_after) 
+fig.colorbar(im0)
+pp.savefig()
+
+
+plt.clf()
+fig = plt.figure()
+title = "Residual of indiv meas from DES mean before cal"
+ax0 = fig.add_subplot(1,1,1, title=title)
+im0 = ax0.hexbin(plot_resids_b2_xs, plot_resids_b2_ys, plot_resids_c2, gridsize=400, reduce_C_function = np.median, vmin=-3*sum_rms_before, vmax=3*sum_rms_before) 
+fig.colorbar(im0)
+pp.savefig()
+
+plt.clf()
+fig = plt.figure()
+title = "Residual of indiv meas from DES mean after cal"
+ax0 = fig.add_subplot(1,1,1, title=title)
+im0 = ax0.hexbin(plot_resids_b2_xs, plot_resids_b2_ys, plot_resids_d2, gridsize=400, reduce_C_function = np.median, vmin=-3*sum_rms_after, vmax=3*sum_rms_after) 
 fig.colorbar(im0)
 pp.savefig()
 

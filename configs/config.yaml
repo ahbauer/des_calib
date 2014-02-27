@@ -1,0 +1,42 @@
+general:
+
+        # what filter(s) do we want to calibrate?  this is a list.
+        filter : 'g'
+
+        # note that these input files depend on the filter!
+        precam_filename : "/Users/bauer/surveys/DES/precam/PreCamStandarStars/G.Stand1percent.s"
+        zp_phot_filename : "/Users/bauer/surveys/DES/zp_phots/g.dat"
+
+        # where are the inputs?
+        globals_dir : '/Users/bauer/surveys/DES/y1p1/equatorial'
+        sdss_filename : "/Users/bauer/surveys/DES/y1p1/equatorial/sdss/SDSSDR10_SouthGalCap/stripe82_sample1.csv"
+
+        # include precam and/or sdss as standards?
+        use_precam : True
+        use_sdss : False
+
+        # what nside is used in the global object file pixelization scheme?
+        nside_file : 32
+
+
+calibrations:
+
+        - id_string : 'exposureid'
+          outfilename : 'nebencal_exp_zps_g'
+          nside : 2
+          max_dets : 5000
+          require_standards : True
+          
+        - id_string : 'image_id'
+          outfilename : 'nebencal_img_zps_g'
+          nside : 32
+          max_dets : 500
+          require_standards : False
+
+          # require_standards: insist on having standards in each exposure nebencal pixel?
+          # if so, will degrade the requested nside until all pixels have some standards.
+          
+          # nside: what resolution do we want to do the nebencal pixelization with?
+          # we'll want an exposure pixelization courser than the image one.
+          # 2: 30 degrees per side, 4: 15 degrees per side, 8:  7.3 degrees per side, 16 : 3.7 degrees, 32 : 1.8 degrees        
+
