@@ -15,9 +15,6 @@ from matplotlib.backends.backend_pdf import PdfPages
 from rtree import index
 from operator import itemgetter, attrgetter
 # from scipy.stats import scoreatpercentile
-
-src_dir = '/Users/bauer/software/python'
-sys.path.append(src_dir)
 from pyspherematch import spherematch
 
 good_quality_magerr = 0.01
@@ -41,9 +38,13 @@ class object(object):
 
 
 band = 'g'
+
+if len(sys.argv) == 2:
+    band = sys.argv[1]
+
 globals_dir = '/Users/bauer/surveys/DES/y1p1/equatorial'
 current_dir = os.getcwd()
-use_expzps = False
+use_expzps = True
 
 nside = 32
 n_ccds = 63
@@ -128,8 +129,8 @@ for line in precam_file:
     if( entries[0][0] == '#' ):
         continue
     ra = float(entries[1])
-    if ra > 300.:
-        ra -= 360.;
+    # if ra > 300.:
+    #     ra -= 360.;
     precam_ras.append(ra)
     precam_decs.append(float(entries[2]))
 print "Read in %d PreCam standards" %len(precam_ras)
@@ -246,11 +247,15 @@ for p in range(npix_wobjs):
     
     global_ras = [o.ra for o in global_objs]
     global_decs = [o.dec for o in global_objs]
-
+    
     inds1, inds2, dists = spherematch( global_ras, global_decs, sdss_ras, sdss_decs, tol=1./3600. )
     
     for i in range(len(inds1)):
         go = global_objs[inds1[i]]
+        
+        if go.ra > 300.:
+            print go.ra
+        #     go.ra -= 360.
         ndet = len(go.objects)
         sdss_match = sdss_objs[inds2[i]]
 

@@ -16,8 +16,6 @@ from scipy.stats import scoreatpercentile
 import tables
 import healpy
 import yaml
-src_dir = '/Users/bauer/software/python'
-sys.path.append(src_dir)
 from pyspherematch import spherematch
 
 """
@@ -149,7 +147,7 @@ def nebencalibrate_pixel( inputs ):
     if len(precam_stars) > 0:
         use_precam = 1
 
-    max_nepochs = 50 # ick!
+    max_nepochs = 5 # ick!  just a starting point, though.
     magerr_sys2 = 0.0004
     
     stars = []
@@ -181,7 +179,6 @@ def nebencalibrate_pixel( inputs ):
     
     precam_count = 0
     
-    
     # read the global objects in from the files.
     global_objs_list = []
     
@@ -191,6 +188,7 @@ def nebencalibrate_pixel( inputs ):
         # if there's no data for this pixel, forget it: nothing to calibrate.
         if not os.path.isfile(os.path.join(globals_dir,filename)):
             return None, None, None
+        # print >> sys.stderr, "Reading in file-resolution pixel %d" %pix
         file = open(os.path.join(globals_dir,filename), 'rb')
         global_objs_list = cPickle.load(file)
         file.close()
@@ -200,6 +198,7 @@ def nebencalibrate_pixel( inputs ):
         for pixn in range(0,8,2):
             filename = 'gobjs_' + str(band) + '_nside' + str(nside) + '_p' + str(all_neighbors[pixn])
             if os.path.isfile(filename):
+                # print >> sys.stderr, "Reading in file-resolution pixel %d" %all_neighbors[pixn]
                 file = open(os.path.join(globals_dir,filename), 'rb')
                 global_objs_list.extend(cPickle.load(file))
                 file.close()
@@ -214,6 +213,7 @@ def nebencalibrate_pixel( inputs ):
         for pix in range(npix_file):
             filename = 'gobjs_' + str(band) + '_nside' + str(nside_file) + '_p' + str(pix)
             if os.path.isfile(os.path.join(globals_dir,filename)):
+                # print >> sys.stderr, "Reading in file-resolution pixel %d" %pix
                 file = open(os.path.join(globals_dir,filename), 'rb')
                 global_objs_list.extend(cPickle.load(file))
                 file.close()
@@ -241,6 +241,7 @@ def nebencalibrate_pixel( inputs ):
             filename = 'gobjs_' + str(band) + '_nside' + str(nside_file) + '_p' + str(pixel_ring)
             # if there's no data for this pixel, forget it: nothing to calibrate.
             if os.path.isfile(os.path.join(globals_dir,filename)):
+                # print >> sys.stderr, "Reading in file-resolution pixel %d" %pixel_ring
                 file = open(os.path.join(globals_dir,filename), 'rb')
                 global_objs_list.extend(cPickle.load(file))
                 file.close()
@@ -258,12 +259,13 @@ def nebencalibrate_pixel( inputs ):
                 filename = 'gobjs_' + str(band) + '_nside' + str(nside_file) + '_p' + str(pixel_ring)
                 # if there's no data for this pixel, forget it: nothing to calibrate.
                 if os.path.isfile(os.path.join(globals_dir,filename)):
+                    # print >> sys.stderr, "Reading in file-resolution pixel %d" %pixel_ring
                     file = open(os.path.join(globals_dir,filename), 'rb')
                     global_objs_list.extend(cPickle.load(file))
                     file.close()
         
     
-    print "Starting pixel %d" %(pix)
+    print "Starting pixel %d: %d global objects" %(pix, len(global_objs_list))
     
     max_matrix_size = len(global_objs_list)*max_nepochs
     a_matrix_xs = np.zeros(max_matrix_size)
@@ -327,6 +329,12 @@ def nebencalibrate_pixel( inputs ):
 
     max_nimgs = len(imgids.keys())
     
+    print "Finished first pass through global objects"
+    n_to_clip = 0
+    for i in worst_ok_err.keys():
+        if worst_ok_err[i][1] < 1.:
+            n_to_clip += 1
+    print "%d regions to calibrate, %d with a clipped number of detections" %(len(worst_ok_err.keys()), n_to_clip)
     
     for go in global_objs_list:
         
@@ -660,9 +668,9 @@ def nebencalibrate( band, nside, nside_file, id_string, precam_map, precam_stars
         indices = np.where(a_submatrix.data != 0.)[0]
 
         if( matrix_size+len(indices) > max_matrix_size ):
-            np.hstack((a_matrix_xs,np.zeros(max_matrix_size)))
-            np.hstack((a_matrix_ys,np.zeros(max_matrix_size)))
-            np.hstack((a_matrix_vals,np.zeros(max_matrix_size)))
+            a_matrix_xs = np.hstack((a_matrix_xs,np.zeros(max_matrix_size)))
+            a_matrix_ys = np.hstack((a_matrix_ys,np.zeros(max_matrix_size)))
+            a_matrix_vals = np.hstack((a_matrix_vals,np.zeros(max_matrix_size)))
             max_matrix_size += max_matrix_size
 
         a_matrix_xs[matrix_size:(matrix_size+len(indices))] = a_submatrix.col[indices]
