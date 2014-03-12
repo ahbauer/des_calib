@@ -12,7 +12,6 @@ matplotlib.use("Agg")
 from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
-from rtree import index
 from operator import itemgetter, attrgetter
 # from scipy.stats import scoreatpercentile
 from pyspherematch import spherematch
@@ -44,6 +43,7 @@ if len(sys.argv) == 2:
 
 globals_dir = '/Users/bauer/surveys/DES/y1p1/equatorial'
 current_dir = os.getcwd()
+use_imgzps = True
 use_expzps = True
 
 nside = 32
@@ -129,15 +129,14 @@ for line in precam_file:
     if( entries[0][0] == '#' ):
         continue
     ra = float(entries[1])
-    # if ra > 300.:
-    #     ra -= 360.;
+    if ra > 300.:
+        ra -= 360.;
     precam_ras.append(ra)
     precam_decs.append(float(entries[2]))
 print "Read in %d PreCam standards" %len(precam_ras)
 
 
-# read in the truth and make a rtree out of it
-# sdss_map = index.Index()
+# read in the truth 
 # sdssfile = open("/Users/bauer/surveys/DES/y1p1/equatorial/sdss/SDSSDR10_SouthGalCap/SouthGalCapStdCat_DES.csv", 'r')
 sdssfile = open("/Users/bauer/surveys/DES/y1p1/equatorial/sdss/SDSSDR10_SouthGalCap/stripe82_sample2.csv", 'r')
 sdss_objs = []
@@ -150,7 +149,7 @@ for line in sdssfile:
     sdss_obj = object()
     sdss_obj.ra = float(entries[2])
     if sdss_obj.ra > 300.:
-        sdss_obj.ra -= 300.
+        sdss_obj.ra -= 360.
     sdss_obj.dec = float(entries[3])
     index = 0
     if band == 'u':
@@ -245,7 +244,7 @@ for p in range(npix_wobjs):
     global_objs = cPickle.load(file)
     file.close()
     
-    global_ras = [o.ra for o in global_objs]
+    global_ras = [o.ra-360. if o.ra>300. else o.ra for o in global_objs]
     global_decs = [o.dec for o in global_objs]
     
     inds1, inds2, dists = spherematch( global_ras, global_decs, sdss_ras, sdss_decs, tol=1./3600. )
@@ -254,8 +253,7 @@ for p in range(npix_wobjs):
         go = global_objs[inds1[i]]
         
         if go.ra > 300.:
-            print go.ra
-        #     go.ra -= 360.
+            go.ra -= 360.
         ndet = len(go.objects)
         sdss_match = sdss_objs[inds2[i]]
 
@@ -280,8 +278,14 @@ for p in range(npix_wobjs):
             image_ccds[image_id] = ccd
             ccds[d] = ccd
             mags_before[d] = mag_psf + zp_phots[ccd]
-            mags_after[d] = mag_psf + zp_phots[ccd] + zps[image_id] 
+            mags_after[d] = mag_psf + zp_phots[ccd] 
+            if use_imgzps:
+                if image_id not in zps:
+                    continue
+                mags_after += zps[image_id] 
             if use_expzps:
+                if exposureid not in exp_zps:
+                    continue
                 mags_after[d] += exp_zps[exposureid]
 
             mag_errors2[d] = magerr_psf*magerr_psf + 0.0001
@@ -309,6 +313,8 @@ for p in range(npix_wobjs):
                 image_ns[image_id] = 1
             d+=1
         ndet=d
+        if ndet < 2:
+            continue
         mags_before = mags_before[0:ndet]
         mags_after = mags_after[0:ndet]
         mag_errors2 = mag_errors2[0:ndet]
