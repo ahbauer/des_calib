@@ -31,18 +31,6 @@ For now, makes one ZP per exposure and one per image.  Can be generalized to sol
 There are some inputs that might want changing in main() and calibrate_by_filter()
 """
 
-class headerline:
-    def __init__(self):
-        self.ra = None
-        self.dec = None
-        self.band = None
-        self.mag_psf = None
-        self.magerr_psf = None
-        self.x_image = None
-        self.y_image = None
-        self.imageid = None
-        self.ccd = None
-
 
 class global_object:
     def __init__(self):
@@ -92,6 +80,7 @@ def read_precam( precam_stars, precam_map, config, band ):
         star['ccd'] = 0
         star['image_id'] = 1
         star['exposureid'] = 1
+        star['superpix'] = -1
         star['band'] = band
         star['matched'] = False
         precam_stars.append(star)
@@ -133,6 +122,7 @@ def read_sdss( sdss_stars, sdss_map, config, band ):
         sdss_obj['ccd'] = 0
         sdss_obj['image_id'] = 1
         sdss_obj['exposureid'] = 1
+        sdss_obj['superpix'] = -1
         sdss_obj['matched'] = False
         if sdss_obj['mag_psf'] > 0.:
             sdss_stars.append(sdss_obj)
@@ -147,9 +137,13 @@ def nebencalibrate_pixel( inputs ):
     use_precam = 0
     if len(precam_stars) > 0:
         use_precam = 1
-
+        
     max_nepochs = 5 # ick!  just a starting point, though.
     magerr_sys2 = 0.0004
+    
+    precam_id = 0
+    if len(precam_stars) > 0:
+        precam_id = precam_stars[0][id_string]
     
     stars = []
     star_map = index.Index()
@@ -325,8 +319,8 @@ def nebencalibrate_pixel( inputs ):
                 precam_star = precam_stars[det_indices[0]]
                 precam_star['for_mean'] = False
                 go.objects.append(precam_star)
-                imgids[1] = True
-                worst_ok_err[1] = [0,1.0] # don't cut any precam objects
+                imgids[precam_id] = True
+                worst_ok_err[precam_id] = [0,1.0] # don't cut any precam objects
                 precam_count += 1
 
     max_nimgs = len(imgids.keys())
@@ -372,7 +366,7 @@ def nebencalibrate_pixel( inputs ):
         d_for_cal = 0
         for star in go.objects:
             
-            if star[id_string] != 1: # if not precam  CHEAP HACK
+            if star[id_string] != precam_id: # if not precam  CHEAP HACK
                 star['magerr_psf'] = np.sqrt(star['magerr_psf']*star['magerr_psf'] + magerr_sys2)
             
             mags_for_cal[d_for_cal] = star['mag_psf']
@@ -471,10 +465,8 @@ def nebencalibrate_pixel( inputs ):
     standard_component = 0
     labels = None
     if require_standards:
-        print img_connectivity
         n_components, labels = cs_graph_components(img_connectivity)
-        print "# disjoint regions:"
-        print n_components
+        print "# disjoint regions: %d" %n_components
         if n_components > 1:
             print "Warning, %d disjoint regions in the data!!" %n_components
             standard_component = labels[image_id_dict[1]]
@@ -501,22 +493,30 @@ def nebencalibrate_pixel( inputs ):
     # print a_matrix
     # print b_vector
 
-    print "Calculating intermediate matrices..."
+    # print "Calculating intermediate matrices..."
     subterm = (a_matrix.transpose()).dot(c_matrix)
     termA = subterm.dot(a_matrix)
     termB = subterm.dot(b_vector)
-    print "Solving!"
+    # print "Solving!"
     # p_vector = linalg.bicgstab(termA,termB)[0]
     # p_vector = linalg.spsolve(termA,termB)
     p_vector = linalg.minres(termA,termB)[0]
 
     # normalize to the precam standards
     if use_precam:
-        if 1 in image_id_dict:
+        if precam_id in image_id_dict:
             print "Normalizing to the PreCam standards!"
-            p_vector -= p_vector[image_id_dict[1]]
+            p_vector -= p_vector[image_id_dict[precam_id]]
             has_precam = 1
-            
+        else:
+            median = np.median(p_vector)
+            print "Normalizing to the median of the zeropoints: %e" %median
+            p_vector -= median
+    else:
+        median = np.median(p_vector)
+        print "Normalizing to the median of the zeropoints: %e" %median
+        p_vector -= median
+    
     print "Solution:"
     print p_vector
     
@@ -546,7 +546,7 @@ def nebencalibrate_pixel( inputs ):
         bad = dict()
         for star in go.objects:
             try:
-                if p_vector[image_id_dict[star[id_string]]] is None:
+                if (p_vector[image_id_dict[star[id_string]]] is None) or np.isnan(p_vector[image_id_dict[star[id_string]]]):
                     bad[star[id_string]] = True
                     continue
                 mags[i] = star['mag_psf'] + p_vector[image_id_dict[star[id_string]]]
@@ -609,6 +609,10 @@ def nebencalibrate( band, nside, nside_file, id_string, precam_map, precam_stars
     npix = 1
     if nside>0:
         npix = healpy.nside2npix(nside)
+    
+    precam_id = 0
+    if len(precam_stars) > 0:
+        precam_id = precam_stars[0][id_string]
     
     p_vector = []
     image_id_dict = []
@@ -674,7 +678,7 @@ def nebencalibrate( band, nside, nside_file, id_string, precam_map, precam_stars
         nzps = 0
         for pix_id in range(npix_wobjs):
             pix = pix_wobjs[pix_id]
-            if (imageid in image_id_dict[pix]) and (imageid == 1 or p_vector[pix][image_id_dict[pix][imageid]] != 0.) and (p_vector[pix][image_id_dict[pix][imageid]] is not None) and not np.isnan(p_vector[pix][image_id_dict[pix][imageid]]):
+            if (imageid in image_id_dict[pix]) and (imageid == precam_id or p_vector[pix][image_id_dict[pix][imageid]] != 0.) and (p_vector[pix][image_id_dict[pix][imageid]] is not None) and not np.isnan(p_vector[pix][image_id_dict[pix][imageid]]):
                 zps.append(p_vector[pix][image_id_dict[pix][imageid]])
                 
                 try:
@@ -835,10 +839,15 @@ def calibrate_by_filter(config):
     
     for calibration in config['calibrations']:
         print "\nStarting calibration on %s\n" %calibration['id_string']
+        standard_stars = []
+        standard_map = None
+        if calibration['use_standards']:
+            standard_stars = precam_stars
+            standard_map = precam_map
         new_zps = None
         success = False
         while not success:
-            new_zps = nebencalibrate( band, calibration['nside'], config['general']['nside_file'], calibration['id_string'], precam_map, precam_stars, precal, config['general']['globals_dir'], require_standards=calibration['require_standards'], max_dets=calibration['max_dets'] )
+            new_zps = nebencalibrate( band, calibration['nside'], config['general']['nside_file'], calibration['id_string'], standard_map, standard_stars, precal, config['general']['globals_dir'], require_standards=calibration['require_standards'], max_dets=calibration['max_dets'] )
             if new_zps == 'degrade':
                 if calibration['nside'] == 1:
                     calibration['nside'] = 0

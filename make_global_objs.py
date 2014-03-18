@@ -31,17 +31,6 @@ Solve the equation, save the ZPs back into the database.
 For now, make one ZP per image.  Can be generalized to solve for spatial dependence, non-linearity.
 """
 
-class headerline:
-    def __init__(self):
-        self.ra = None
-        self.dec = None
-        self.band = None
-        self.mag_psf = None
-        self.magerr_psf = None
-        self.x_image = None
-        self.y_image = None
-        self.imageid = None
-        self.ccd = None
 
 class global_object:
     def __init__(self):
@@ -118,6 +107,7 @@ def make_gos(filename, nside, band):
         star2['lskyphot'] = star['lskyphot']
         star2['gskyhot'] = star['gskyhot']
         star2['lskyhot'] = star['lskyhot']
+        star2['superpix'] = int(4*np.floor(star2['y_image']/512.) + np.floor(star2['x_image']/512.) + 32*star2['ccd'])
         
         phi = star['ra']*3.1415926/180.
         theta = (90.-star['dec'])*3.1415926/180.
@@ -202,7 +192,7 @@ def make_gos(filename, nside, band):
 
 
 def main():
-    filt = 'y'
+    filt = 'i'
     nside = 32 # 2: 30 degrees per side, 4: 15 degrees per side, 8:  7.3 degrees per side
     
     print "Making global objects from DES, filter %s!" %filt

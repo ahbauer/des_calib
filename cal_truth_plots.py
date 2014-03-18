@@ -43,6 +43,7 @@ if len(sys.argv) == 2:
 
 globals_dir = '/Users/bauer/surveys/DES/y1p1/equatorial'
 current_dir = os.getcwd()
+use_spxzps = True
 use_imgzps = True
 use_expzps = True
 
@@ -65,6 +66,20 @@ for line in zp_phot_file:
     zp_phots[int(entries[0])] = -1.0*float(entries[4])
 print "read in ccd offsets (zp_phots)"
 
+# read in the superpixel zero point solutions
+spx_zps = None
+if use_spxzps:
+    spx_zps = dict()
+    spx_zp_array = []
+    spx_zp_file = current_dir + '/nebencal_spx_zps_' + str(band)
+    file = open(spx_zp_file, 'r')
+    filelines = file.readlines()
+    for line in filelines:
+        entries = line.split()
+        spx_zps[int(entries[0])] = float(entries[1])
+        spx_zp_array.append(float(entries[1]))
+    print "read in %d superpixel zps" %len(spx_zps.keys())
+
 
 # read in the exposure zero point solutions
 exp_zps = None
@@ -82,16 +97,18 @@ if use_expzps:
 
 
 # read in the zero point solutions
-zps = dict()
-zp_array = []
-zp_file = current_dir + '/nebencal_img_zps_' + str(band)
-file = open(zp_file, 'r')
-filelines = file.readlines()
-for line in filelines:
-    entries = line.split()
-    zps[int(entries[0])] = float(entries[1])
-    zp_array.append(float(entries[1]))
-print "read in %d image zps" %len(zps.keys())
+zps = None
+if use_imgzps:
+    zps = dict()
+    zp_array = []
+    zp_file = current_dir + '/nebencal_img_zps_' + str(band)
+    file = open(zp_file, 'r')
+    filelines = file.readlines()
+    for line in filelines:
+        entries = line.split()
+        zps[int(entries[0])] = float(entries[1])
+        zp_array.append(float(entries[1]))
+    print "read in %d image zps" %len(zps.keys())
 
 
 # read in the CCD positions in the focal plane
@@ -274,15 +291,20 @@ for p in range(npix_wobjs):
             if image_id == 1:
                 continue
             ccd = go.objects[d]['ccd']-1
+            spx = int(4*np.floor(ys[d]/512.) + np.floor(xs[d]/512.) + 32*(ccd+1))
             exposureid = go.objects[d]['exposureid']
             image_ccds[image_id] = ccd
             ccds[d] = ccd
             mags_before[d] = mag_psf + zp_phots[ccd]
-            mags_after[d] = mag_psf + zp_phots[ccd] 
+            mags_after[d] = mag_psf + zp_phots[ccd]
+            if use_spxzps:
+                if spx not in spx_zps:
+                    continue
+                mags_after[d] += spx_zps[spx]
             if use_imgzps:
                 if image_id not in zps:
                     continue
-                mags_after += zps[image_id] 
+                mags_after[d] += zps[image_id] 
             if use_expzps:
                 if exposureid not in exp_zps:
                     continue
@@ -359,8 +381,11 @@ for p in range(npix_wobjs):
         
         n_rms += 1
 
-sum_rms_before = np.sum(rms_befores)/n_rms
-sum_rms_after = np.sum(rms_afters)/n_rms
+if n_rms > 0:
+    sum_rms_before = np.sum(rms_befores)/n_rms
+    sum_rms_after = np.sum(rms_afters)/n_rms
+else:
+    print "Um, n_rms=%d!!!!!!" %n_rms
 
 for iid in image_ras.keys():
     image_ras[iid] /= image_ns[iid]
