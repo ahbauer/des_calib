@@ -18,6 +18,9 @@ import tables
 import healpy
 import yaml
 from pyspherematch import spherematch
+from nebencal_utils import read_precam
+from nebencal_utils import read_sdss
+from nebencal_utils import global_object
 
 """
 nebencal.py
@@ -899,9 +902,9 @@ def calibrate_by_filter(config):
     precam_stars = []
     precam_map = index.Index()
     if config['general']['use_precam']:
-        read_precam( precam_stars, precam_map, config, band )
+        read_precam( precam_stars, precam_map, config['general']['precam_filename'], band )
     if config['general']['use_sdss']:
-        read_sdss( precam_stars, precam_map, config, band )
+        read_sdss( precam_stars, precam_map, config['general']['sdss_filename'], band )
     
     
     # calibrate!

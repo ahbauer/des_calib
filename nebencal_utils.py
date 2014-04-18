@@ -12,8 +12,8 @@ class global_object(object):
         self.dec = None
         self.objects = []
         
-def read_precam( precam_stars, precam_map, config, band ):
-    precam_file = open( config['general']['precam_filename'], 'r' )
+def read_precam( precam_stars, precam_map, filename, band ):
+    precam_file = open( filename, 'r' )
     # read in the precam standards and make an index
     count = 0
     for line in precam_file:
@@ -41,8 +41,8 @@ def read_precam( precam_stars, precam_map, config, band ):
     print "Read in %d PreCam standards" %count
 
 
-def read_sdss( sdss_stars, sdss_map, config, band ):
-    sdssfile = open(config['general']['sdss_filename'], 'r')
+def read_sdss( sdss_stars, sdss_map, filename, band ):
+    sdssfile = open(filename, 'r')
     count=0
     for line in sdssfile:
         entries = line.split(",")

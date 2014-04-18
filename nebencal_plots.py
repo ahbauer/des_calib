@@ -5,6 +5,7 @@ import re
 import subprocess
 # from operator import itemgetter
 import random
+import yaml
 import cPickle
 import numpy as np
 import matplotlib
@@ -13,9 +14,13 @@ from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 from operator import itemgetter, attrgetter
+from rtree import index
 # from scipy.stats import scoreatpercentile
 from pyspherematch import spherematch
 
+from nebencal_utils import read_precam
+from nebencal_utils import read_sdss
+from nebencal_utils import global_object
 
 def make_plots(config):
     
@@ -37,15 +42,17 @@ def make_plots(config):
 
 
     # read in any catalogs we would like to treat as standards (i.e. precam, sdss...)
-    precam_stars = []
-    precam_map = index.Index()
+    standard_stars = []
+    standard_map = index.Index()
     if config['general']['use_precam']:
-        read_precam( precam_stars, precam_map, config, band )
+        read_precam( standard_stars, standard_map, config['general']['precam_filename'], band )
     if config['general']['use_sdss']:
-        read_sdss( precam_stars, precam_map, config, band )
+        read_sdss( standard_stars, standard_map, config['general']['sdss_filename'], band )
 
     # to do: add a validation catalog that we didn't calibrate to...
-
+    validation_stars = []
+    validation_map = index.Index()
+    read_sdss( validation_stars, validation_map, config['general']['sdss_validation'], band )
 
     # read in the nominal ccd offsets (zp_phots), which will be our starting point
     zp_list = []
@@ -74,7 +81,7 @@ def make_plots(config):
                     continue
                 zp_dict[int(entries[0])] = float(entries[1])
             zp_list.append(zp_dict)
-            print "Read in {0} zeropoints from {1} for id_string {2}, operand {3]".format(len(zp_dict.keys())-2, zp_filename, calibration['id_strings'][i], calibration['operands'][i])
+            print "Read in {0} zeropoints from {1} for id_string {2}, operand {3}".format(len(zp_dict.keys())-2, zp_filename, calibration['id_strings'][i], calibration['operands'][i])
 
 
     # read in the CCD positions in the focal plane
@@ -135,6 +142,10 @@ def make_plots(config):
     image_befores = dict()
     image_afters = dict()
     sdss_mags = dict()
+    validation_ras = [o['ra']-360. if o['ra']>300. else o['ra'] for o in validation_stars]
+    validation_decs = [o['dec'] for o in validation_stars]
+    standard_ras = [o['ra']-360. if o['ra']>300. else o['ra'] for o in standard_stars]
+    standard_decs = [o['dec'] for o in standard_stars]
     sum_rms_before = 0.
     sum_rms_after = 0.
     n_rms = 0
@@ -168,7 +179,7 @@ def make_plots(config):
         global_ras = [o.ra-360. if o.ra>300. else o.ra for o in global_objs]
         global_decs = [o.dec for o in global_objs]
     
-        inds1, inds2, dists = spherematch( global_ras, global_decs, sdss_ras, sdss_decs, tol=1./3600. )
+        inds1, inds2, dists = spherematch( global_ras, global_decs, validation_ras, validation_decs, tol=1./3600. )
     
         for i in range(len(inds1)):
             go = global_objs[inds1[i]]
@@ -176,7 +187,7 @@ def make_plots(config):
             if go.ra > 300.:
                 go.ra -= 360.
             ndet = len(go.objects)
-            sdss_match = sdss_objs[inds2[i]]
+            sdss_match = validation_stars[inds2[i]]
 
             mags_before = np.zeros(ndet)
             mags_after = np.zeros(ndet)
@@ -200,8 +211,14 @@ def make_plots(config):
                 exposureid = go.objects[d]['exposureid']
                 image_ccds[image_id] = ccd
                 ccds[d] = ccd
-                mags_before[d] = mag_psf + zp_phots[ccd]
-                mags_after[d] = mag_psf + zp_phots[ccd]
+                mags_before[d] = mag_psf
+                mags_after[d] = mag_psf
+                badmag = False
+                if ccd in zp_phots:
+                    mags_before[d] += zp_phots[ccd]
+                    mags_after[d] += zp_phots[ccd]
+                else:
+                    badmag = True
                 for zps in zp_list:
                     operand = 1
                     if zps['operand'] not in [1,None,'None']:
@@ -209,28 +226,32 @@ def make_plots(config):
                     id_string = go.objects[d][zps['id_string']]
                     if id_string in zps:
                         mags_after[d] += operand*zps[id_string]
+                    else:
+                        badmag = True
+                if badmag:
+                    continue
                 mag_errors2[d] = magerr_psf*magerr_psf + 0.0001
                 iids[d] = image_id
-                total_magdiffsb.append(mags_before[d] - sdss_match.mag)
-                total_magdiffsa.append(mags_after[d] - sdss_match.mag)
+                total_magdiffsb.append(mags_before[d] - sdss_match['mag_psf'])
+                total_magdiffsa.append(mags_after[d] - sdss_match['mag_psf'])
                 try:
                     image_ras[image_id] += go.ra
                     image_decs[image_id] += go.dec
-                    image_diffbs[image_id] += mags_before[d] - sdss_match.mag
-                    image_diffas[image_id] += mags_after[d] - sdss_match.mag
+                    image_diffbs[image_id] += mags_before[d] - sdss_match['mag_psf']
+                    image_diffas[image_id] += mags_after[d] - sdss_match['mag_psf']
                     image_befores[image_id] += mags_before[d]
                     image_afters[image_id] += mags_after[d]
-                    sdss_mags[image_id] += sdss_match.mag
+                    sdss_mags[image_id] += sdss_match['mag_psf']
                     image_ns[image_id] += 1
                 except KeyError:
                     # the current image id is not in the image_ids dictionary yet
                     image_ras[image_id] = go.ra
                     image_decs[image_id] = go.dec
-                    image_diffbs[image_id] = mags_before[d] - sdss_match.mag
-                    image_diffas[image_id] = mags_after[d] - sdss_match.mag
+                    image_diffbs[image_id] = mags_before[d] - sdss_match['mag_psf']
+                    image_diffas[image_id] = mags_after[d] - sdss_match['mag_psf']
                     image_befores[image_id] = mags_before[d]
                     image_afters[image_id] = mags_after[d]
-                    sdss_mags[image_id] = sdss_match.mag
+                    sdss_mags[image_id] = sdss_match['mag_psf']
                     image_ns[image_id] = 1
                 d+=1
             ndet=d
@@ -251,24 +272,24 @@ def make_plots(config):
             for d in range(ndet):
                 plot_resids_c2.append(mags_before[d]-sum_m_before)
                 plot_resids_d2.append(mags_after[d]-sum_m_after)
-                plot_resids_b2.append(mags_before[d] - sdss_match.mag)
+                plot_resids_b2.append(mags_before[d] - sdss_match['mag_psf'])
                 plot_resids_b2_xs.append(xs[d] + fp_xs[ccds[d]])
                 plot_resids_b2_ys.append(ys[d] + fp_ys[ccds[d]])
-                plot_resids_a2.append(mags_after[d] - sdss_match.mag)
+                plot_resids_a2.append(mags_after[d] - sdss_match['mag_psf'])
                 try:
-                    image_resids_b[iids[d]] += mags_before[d] - sdss_match.mag
-                    image_resids_a[iids[d]] += mags_after[d] - sdss_match.mag
+                    image_resids_b[iids[d]] += mags_before[d] - sdss_match['mag_psf']
+                    image_resids_a[iids[d]] += mags_after[d] - sdss_match['mag_psf']
                 except KeyError:
-                    image_resids_b[iids[d]] = mags_before[d] - sdss_match.mag
-                    image_resids_a[iids[d]] = mags_after[d] - sdss_match.mag
+                    image_resids_b[iids[d]] = mags_before[d] - sdss_match['mag_psf']
+                    image_resids_a[iids[d]] = mags_after[d] - sdss_match['mag_psf']
 
             # calculate rms before and after
-            rms_before = np.std(mags_before-sdss_match.mag)
-            rms_after = np.std(mags_after-sdss_match.mag)
-            # meandiff_before = sum_m_before - sdss_match.mag
-            # meandiff_after = sum_m_after - sdss_match.mag
+            rms_before = np.std(mags_before-sdss_match['mag_psf'])
+            rms_after = np.std(mags_after-sdss_match['mag_psf'])
+            # meandiff_before = sum_m_before - sdss_match['mag_psf']
+            # meandiff_after = sum_m_after - sdss_match['mag_psf']
             # if meandiff_after < -3.:
-            #     print "%f %f %f %f %d" %(sum_m_before, sum_m_after, zps[image_id], sdss_match.mag, image_id)
+            #     print "%f %f %f %f %d" %(sum_m_before, sum_m_after, zps[image_id], sdss_match['mag_psf'], image_id)
             sum_rms_before += rms_before
             sum_rms_after += rms_after
         
@@ -316,7 +337,7 @@ def make_plots(config):
             total_magdiffsa = random.sample(total_magdiffsa, 100000)
 
     fig = plt.figure()
-    title = "Total mag diff before calibration, med %e, rms %e" %(np.median(total_magdiffsb), np.std(total_magdiffsb))
+    title = "Mag offset before calibration, med %e, rms %e" %(np.median(total_magdiffsb), np.std(total_magdiffsb))
     print title
     ax0 = fig.add_subplot(1,1,1, title=title)
     ax0.set_yscale('log')
@@ -325,7 +346,7 @@ def make_plots(config):
 
     plt.clf()
     fig = plt.figure()
-    title = "Total mag diff after calibration, med %e, rms %e" %(np.median(total_magdiffsa), np.std(total_magdiffsa))
+    title = "Mag offset after calibration, med %e, rms %e" %(np.median(total_magdiffsa), np.std(total_magdiffsa))
     print title
     ax0 = fig.add_subplot(1,1,1, title=title)
     ax0.set_yscale('log')
@@ -405,11 +426,11 @@ def make_plots(config):
 
 
     plt.clf()
-    title = "Precam star locations"
+    title = "Standard star locations"
     xlab = "RA"
     ylab = "Dec"
     ax0 = fig.add_subplot(1,1,1, xlabel=xlab, ylabel=ylab, title=title)
-    im0 = ax0.hexbin(precam_ras, precam_decs, bins='log',extent=(np.min(ra_array),np.max(ra_array),np.min(dec_array),np.max(dec_array))) 
+    im0 = ax0.hexbin(standard_ras, standard_decs, bins='log',extent=(np.min(ra_array),np.max(ra_array),np.min(dec_array),np.max(dec_array))) 
     fig.colorbar(im0)
     pp.savefig()
 
