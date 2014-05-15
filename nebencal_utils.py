@@ -25,10 +25,10 @@ def read_precam( precam_stars, precam_map, filename, band ):
         star['dec'] = float(entries[2])
         star['mag_psf'] = float(entries[3])
         star['magerr_psf'] = 0.02 #float(entries[6])
-        star['x_image'] = 0.
-        star['y_image'] = 0.
-        star['fp_r'] = 0.
-        star['secz'] = 0.
+        star['x_image'] = 1.
+        star['y_image'] = 1.
+        star['fp_r'] = 1.
+        star['secz'] = 1.
         star['ccd'] = 0
         star['image_id'] = 1
         star['exposureid'] = 1
@@ -69,10 +69,10 @@ def read_sdss( sdss_stars, sdss_map, filename, band ):
             exit(1)
         sdss_obj['band'] = band
         sdss_obj['magerr_psf'] = 0.02
-        sdss_obj['x_image'] = 0.
-        sdss_obj['y_image'] = 0.
-        sdss_obj['fp_r'] = 0.
-        sdss_obj['secz'] = 0
+        sdss_obj['x_image'] = 1.
+        sdss_obj['y_image'] = 1.
+        sdss_obj['fp_r'] = 1.
+        sdss_obj['secz'] = 1.
         sdss_obj['ccd'] = 0
         sdss_obj['image_id'] = 1
         sdss_obj['exposureid'] = 1

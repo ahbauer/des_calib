@@ -852,27 +852,28 @@ def nebencalibrate( band, nside, nside_file, id_strings, operands, precam_map, p
             if imageid in image_id_dicts[pix][nid] and pix_id in pix_id_dict2 and not np.isnan(p_vectors[pix][nid][image_id_dicts[pix][nid][imageid]]):
                 zp_tot += p_vectors[pix][nid][image_id_dicts[pix][nid][imageid]] + p1_vector[pix_id_dict2[pix_id]] 
                 zp_n += 1
-        zp_tot /= zp_n
-        zeropoints[imageid] = zp_tot
+        if zp_n > 0:
+            zp_tot /= zp_n
+            zeropoints[imageid] = zp_tot
     zeropoints_tot.append(zeropoints)
     
     # are there more id_strings?
     if len(id_strings)>1:
-        for nid0,id_string in enumerate(id_strings[1:]):
-            nid = nid0+1
+        for nid,id_string in enumerate(id_strings[1:]):
+            nid1 = nid+1 # because enumerate starts from zero
             zeropoints = dict()
             imagelist1 = []
             for pix in range(npix):
                 if image_id_dicts[pix] is not None:
-                    imagelist1.extend(image_id_dicts[pix][nid].keys())
+                    imagelist1.extend(image_id_dicts[pix][nid1].keys())
             imagelist1 = list(set(imagelist1))
             for imageid in imagelist1: #image_id_dicts[pix][id_string].keys():
                 zp_tot = 0.
                 zp_n = 0
                 for pix_id in range(npix_wobjs):
                     pix = pix_wobjs[pix_id]
-                    if imageid in image_id_dicts[pix][nid] and not np.isnan(p_vectors[pix][nid0][image_id_dicts[pix][nid][imageid]]):
-                        zp_tot += p_vectors[pix][nid0][image_id_dicts[pix][nid][imageid]]
+                    if imageid in image_id_dicts[pix][nid1] and not np.isnan(p_vectors[pix][nid1][image_id_dicts[pix][nid1][imageid]]):
+                        zp_tot += p_vectors[pix][nid1][image_id_dicts[pix][nid1][imageid]]
                         zp_n += 1
                 if zp_n > 0:
                     zp_tot /= zp_n
@@ -926,6 +927,9 @@ def calibrate_by_filter(config):
             if new_zps == 'degrade':
                 if calibration['nside'] == 1:
                     calibration['nside'] = 0
+                elif calibration['nside'] == 0:
+                    print "Giving up!"
+                    exit(1)
                 calibration['nside'] /= 2
                 print "Now trying nside=%d" %calibration['nside']
             else:

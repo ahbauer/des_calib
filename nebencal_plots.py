@@ -161,6 +161,7 @@ def make_plots(config):
     plot_resids_a2 = []
     plot_resids_c2 = []
     plot_resids_d2 = []
+    plot_resids_e2 = []
     plot_resids_b2_xs = []
     plot_resids_b2_ys = []
 
@@ -272,6 +273,7 @@ def make_plots(config):
             for d in range(ndet):
                 plot_resids_c2.append(mags_before[d]-sum_m_before)
                 plot_resids_d2.append(mags_after[d]-sum_m_after)
+                plot_resids_e2.append(mags_after[d]-sum_m_before)
                 plot_resids_b2.append(mags_before[d] - sdss_match['mag_psf'])
                 plot_resids_b2_xs.append(xs[d] + fp_xs[ccds[d]])
                 plot_resids_b2_ys.append(ys[d] + fp_ys[ccds[d]])
@@ -302,6 +304,16 @@ def make_plots(config):
             n_rms += 1
 
     print ""
+    
+
+    plot_resids_b2_xs = np.array(plot_resids_b2_xs)
+    plot_resids_b2_ys = np.array(plot_resids_b2_ys)
+    plot_resids_a2 = np.array(plot_resids_a2)
+    plot_resids_b2 = np.array(plot_resids_b2)
+    plot_resids_c2 = np.array(plot_resids_c2)
+    plot_resids_d2 = np.array(plot_resids_d2)
+    plot_resids_e2 = np.array(plot_resids_e2)
+        
 
     if n_rms > 0:
         sum_rms_before = np.sum(rms_befores)/n_rms
@@ -337,7 +349,9 @@ def make_plots(config):
             total_magdiffsa = random.sample(total_magdiffsa, 100000)
 
     fig = plt.figure()
-    title = "Mag offset before calibration, med %e, rms %e" %(np.median(total_magdiffsb), np.std(total_magdiffsb))
+    onesigma = (np.percentile(total_magdiffsb, 84) - np.percentile(total_magdiffsb, 16))/2.
+    # title = "Mag offset before calibration, med %e, rms %e" %(np.median(total_magdiffsb), np.std(total_magdiffsb))
+    title = "Mag offset before calibration, med %e, 68%% error %e" %(np.median(total_magdiffsb), onesigma)
     print title
     ax0 = fig.add_subplot(1,1,1, title=title)
     ax0.set_yscale('log')
@@ -346,7 +360,9 @@ def make_plots(config):
 
     plt.clf()
     fig = plt.figure()
-    title = "Mag offset after calibration, med %e, rms %e" %(np.median(total_magdiffsa), np.std(total_magdiffsa))
+    onesigma = (np.percentile(total_magdiffsa, 84) - np.percentile(total_magdiffsa, 16))/2.
+    # title = "Mag offset after calibration, med %e, rms %e" %(np.median(total_magdiffsa), np.std(total_magdiffsa))
+    title = "Mag offset after calibration, med %e, 68%% error %e" %(np.median(total_magdiffsa), onesigma)
     print title
     ax0 = fig.add_subplot(1,1,1, title=title)
     ax0.set_yscale('log')
@@ -384,8 +400,8 @@ def make_plots(config):
     image_after_array = []
     n_array = []
     ccd_array = np.zeros(n_ccds)
-    residb_array = np.zeros(n_ccds)
-    resida_array = np.zeros(n_ccds)
+    ras_35 = []
+    decs_35 = []
     for key in image_resids_a:
         ra_array.append(image_ras[key])
         dec_array.append(image_decs[key])
@@ -396,14 +412,13 @@ def make_plots(config):
         sdss_array.append(sdss_mags[key])
         image_after_array.append(image_afters[key])
         ccd_array[image_ccds[key]] += 1
-        residb_array[image_ccds[key]] += image_resids_b[key]
-        resida_array[image_ccds[key]] += image_resids_a[key]
-    for ccd in range(63):
-        if ccd_array[ccd]>0:
-            residb_array[ccd] /= ccd_array[ccd]
-            resida_array[ccd] /= ccd_array[ccd]
+        if image_ccds[key] == 34:
+            ras_35.append(image_ras[key])
+            decs_35.append(image_decs[key])
     ra_array = np.array(ra_array)
     dec_array = np.array(dec_array)
+    diffb_array = np.array(diffb_array)
+    diffa_array = np.array(diffa_array)
 
     mdiffstdb = np.std(total_magdiffsb)
     mdiffstda = np.std(total_magdiffsa)
@@ -430,17 +445,33 @@ def make_plots(config):
     xlab = "RA"
     ylab = "Dec"
     ax0 = fig.add_subplot(1,1,1, xlabel=xlab, ylabel=ylab, title=title)
-    im0 = ax0.hexbin(standard_ras, standard_decs, bins='log',extent=(np.min(ra_array),np.max(ra_array),np.min(dec_array),np.max(dec_array))) 
-    fig.colorbar(im0)
+    im0 = ax0.hexbin(standard_ras, standard_decs, extent=(np.min(ra_array),np.max(ra_array),np.min(dec_array),np.max(dec_array))) 
+    # fig.colorbar(im0)
+    pp.savefig()
+    
+    plt.clf()
+    title = "Pointings (Central locations of CCD 35)"
+    xlab = "RA"
+    ylab = "Dec"
+    ax0 = fig.add_subplot(1,1,1, xlabel=xlab, ylabel=ylab, title=title)
+    print "%d instances of ccd 35" %len(ras_35)
+    im0 = ax0.hexbin(ras_35, decs_35, bins='log',extent=(np.min(ra_array),np.max(ra_array),np.min(dec_array),np.max(dec_array)))
     pp.savefig()
 
-
+    # the plots get really big at this point, so let's try plotting a subsample.
+    if len(ra_array) > 100000:
+        indices = range(len(ra_array))
+        np.random.shuffle(indices)
+        indices = indices[0:100000]
+    else:
+        indices = range(len(ra_array))
+    
     plt.clf()
     title = "Resid of mean from SDSS by ra and dec before cal"
     xlab = "RA"
     ylab = "Dec"
     ax0 = fig.add_subplot(111, xlabel=xlab, ylabel=ylab, title=title)
-    im0 = ax0.hexbin(ra_array, dec_array, diffb_array, vmin=np.median(total_magdiffsb)-3*mdiffstdb, vmax=np.median(total_magdiffsb)+3*mdiffstdb)
+    im0 = ax0.hexbin(ra_array[indices], dec_array[indices], diffb_array[indices], vmin=np.median(total_magdiffsb)-3*mdiffstdb, vmax=np.median(total_magdiffsb)+3*mdiffstdb)
     fig.colorbar(im0)
     pp.savefig()
 
@@ -449,17 +480,24 @@ def make_plots(config):
     xlab = "RA"
     ylab = "Dec"
     ax0 = fig.add_subplot(111, xlabel=xlab, ylabel=ylab, title=title)
-    im0 = ax0.hexbin(ra_array, dec_array, diffa_array, vmin=np.median(total_magdiffsa)-3*mdiffstda, vmax=np.median(total_magdiffsa)+3*mdiffstda)
+    im0 = ax0.hexbin(ra_array[indices], dec_array[indices], diffa_array[indices], vmin=np.median(total_magdiffsa)-3*mdiffstda, vmax=np.median(total_magdiffsa)+3*mdiffstda)
     fig.colorbar(im0)
     pp.savefig()
 
+    # the plots get really big at this point, so let's try plotting a subsample.
+    if len(plot_resids_b2) > 100000:
+        indices = range(len(plot_resids_b2))
+        np.random.shuffle(indices)
+        indices = indices[0:100000]
+    else:
+        indices = range(len(plot_resids_b2))
 
     plt.clf()
     fig = plt.figure()
     title = "Residual of indiv meas from SDSS before cal"
     ax0 = fig.add_subplot(1,1,1, title=title)
     #mdiffstdb
-    im0 = ax0.hexbin(plot_resids_b2_xs, plot_resids_b2_ys, plot_resids_b2, gridsize=400, reduce_C_function = np.median, vmin=np.median(total_magdiffsb)-3*sum_rms_before, vmax=np.median(total_magdiffsb)+3*sum_rms_before) 
+    im0 = ax0.hexbin(plot_resids_b2_xs[indices], plot_resids_b2_ys[indices], plot_resids_b2[indices], gridsize=400, reduce_C_function = np.mean, vmin=np.median(total_magdiffsb)-3*sum_rms_before, vmax=np.median(total_magdiffsb)+3*sum_rms_before) 
     fig.colorbar(im0)
     pp.savefig()
 
@@ -468,7 +506,7 @@ def make_plots(config):
     title = "Residual of indiv meas from SDSS after cal"
     ax0 = fig.add_subplot(1,1,1, title=title)
     #mdiffstda
-    im0 = ax0.hexbin(plot_resids_b2_xs, plot_resids_b2_ys, plot_resids_a2, gridsize=400, reduce_C_function = np.median, vmin=np.median(total_magdiffsa)-3*sum_rms_after, vmax=np.median(total_magdiffsa)+3*sum_rms_after) 
+    im0 = ax0.hexbin(plot_resids_b2_xs[indices], plot_resids_b2_ys[indices], plot_resids_a2[indices], gridsize=400, reduce_C_function = np.mean, vmin=np.median(total_magdiffsa)-3*sum_rms_after, vmax=np.median(total_magdiffsa)+3*sum_rms_after) 
     fig.colorbar(im0)
     pp.savefig()
 
@@ -477,7 +515,7 @@ def make_plots(config):
     fig = plt.figure()
     title = "Residual of indiv meas from DES mean before cal"
     ax0 = fig.add_subplot(1,1,1, title=title)
-    im0 = ax0.hexbin(plot_resids_b2_xs, plot_resids_b2_ys, plot_resids_c2, gridsize=400, reduce_C_function = np.median, vmin=-3*sum_rms_before, vmax=3*sum_rms_before) 
+    im0 = ax0.hexbin(plot_resids_b2_xs[indices], plot_resids_b2_ys[indices], plot_resids_c2[indices], gridsize=400, reduce_C_function = np.mean, vmin=-3*sum_rms_before, vmax=3*sum_rms_before) 
     fig.colorbar(im0)
     pp.savefig()
 
@@ -485,9 +523,17 @@ def make_plots(config):
     fig = plt.figure()
     title = "Residual of indiv meas from DES mean after cal"
     ax0 = fig.add_subplot(1,1,1, title=title)
-    im0 = ax0.hexbin(plot_resids_b2_xs, plot_resids_b2_ys, plot_resids_d2, gridsize=400, reduce_C_function = np.median, vmin=-3*sum_rms_after, vmax=3*sum_rms_after) 
+    im0 = ax0.hexbin(plot_resids_b2_xs[indices], plot_resids_b2_ys[indices], plot_resids_d2[indices], gridsize=400, reduce_C_function = np.mean, vmin=-3*sum_rms_after, vmax=3*sum_rms_after) 
     fig.colorbar(im0)
     pp.savefig()
+    
+    # plt.clf()
+    # fig = plt.figure()
+    # title = "Residual of indiv meas after cal from DES mean before cal"
+    # ax0 = fig.add_subplot(1,1,1, title=title)
+    # im0 = ax0.hexbin(plot_resids_b2_xs[indices], plot_resids_b2_ys[indices], plot_resids_e2[indices], gridsize=400, reduce_C_function = np.mean, vmin=np.mean(total_magdiffsb)--3*sum_rms_after, vmax=np.mean(total_magdiffsb)+3*sum_rms_after) 
+    # fig.colorbar(im0)
+    # pp.savefig()
 
     pp.close()
 

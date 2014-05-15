@@ -192,7 +192,7 @@ def make_gos(filename, nside, band):
 
 
 def main():
-    filt = 'i'
+    filt = 'z'
     nside = 32 # 2: 30 degrees per side, 4: 15 degrees per side, 8:  7.3 degrees per side
     
     print "Making global objects from DES, filter %s!" %filt
