@@ -17,7 +17,7 @@ from scipy.stats import scoreatpercentile
 import tables
 import healpy
 import yaml
-from pyspherematch import spherematch
+# from pyspherematch import spherematch
 from nebencal_utils import read_precam
 from nebencal_utils import read_sdss
 from nebencal_utils import global_object
@@ -61,7 +61,7 @@ def unmatched(star):
 
 def nebencalibrate_pixel( inputs ):
     
-    [pix, nside, nside_file, band, precal, precam_stars, precam_map, globals_dir, id_strings, operands, max_dets, require_standards] = inputs
+    [pix, nside, nside_file, band, precal, precam_stars, precam_map, globals_dir, id_strings, operands, max_dets, require_standards, ra_min, ra_max, dec_min, dec_max] = inputs
     
     use_precam = 0
     if len(precam_stars) > 0:
@@ -212,12 +212,25 @@ def nebencalibrate_pixel( inputs ):
     ndet_for_cal = 0
     ndet_for_summi = 0
     worst_ok_err = dict()
+    
+    obj_inarea = False
     for go in global_objs_list:
+        
+        if go.dec < dec_min or go.dec > dec_max:
+            continue
+        if ra_min > ra_max: # 300 60
+            if go.ra > ra_max and go.ra < ra_min:
+                continue
+        else:
+            if go.ra < ra_min or go.ra > ra_max:
+                continue
 
         # cut out objects that are bad quality!
         go.objects = filter(good_quality, go.objects)
         if len(go.objects) < 2:
             continue
+        
+        obj_inarea = True
         
         for obj in go.objects:
             # if bad quality (or precam), don't use for calibration
@@ -272,6 +285,9 @@ def nebencalibrate_pixel( inputs ):
                     worst_ok_err[nid][precam_id] = [0,1.0] # don't cut any precam objects
                 precam_count += 1
 
+    if not obj_inarea:
+        return None, None, None
+
     max_nimgs = dict()
     max_nimgs_total = 0
     for nid, id_string in enumerate(id_strings):
@@ -284,6 +300,7 @@ def nebencalibrate_pixel( inputs ):
             img_connectivity = np.zeros((max_nimgs[0], max_nimgs[0]), dtype='int')
     
     print "Finished first pass through global objects"
+    
     for nid, id_string in enumerate(id_strings):
         n_to_clip = 0
         for i in worst_ok_err[nid].keys():
@@ -296,6 +313,15 @@ def nebencalibrate_pixel( inputs ):
         if len(go.objects) < 2:
             continue
         
+        if go.dec < dec_min or go.dec > dec_max:
+            continue
+        if ra_min > ra_max: # 300 60
+            if go.ra > ra_max and go.ra < ra_min:
+                continue
+        else:
+            if go.ra < ra_min or go.ra > ra_max:
+                continue
+                
         # cut out the bad objects for ALL id strings!  (all calibration identifiers)
         for nid,id_string in enumerate(id_strings):
             go.objects = [obj for obj in go.objects if obj['magerr_psf'] < worst_ok_err[nid][obj[id_string]][1]]
@@ -492,6 +518,9 @@ def nebencalibrate_pixel( inputs ):
     if use_precam:
         p_base = 0
         for nid, id_string in enumerate(id_strings):
+            # only normalize the additive zero points...  not ideal, but not sure what's better.
+            if operands[nid] not in [ 'None', None, 1 ]:
+                continue
             # deal with the indices for each id_string separately
             p_vector_indices = image_id_dict[nid].values()
             if precam_ids[nid] in image_id_dict[nid]:
@@ -532,6 +561,15 @@ def nebencalibrate_pixel( inputs ):
         
         if len(go.objects) < 2:
             continue
+        
+        if go.dec < dec_min or go.dec > dec_max:
+            continue
+        if ra_min > ra_max: # 300 60
+            if go.ra > ra_max and go.ra < ra_min:
+                continue
+        else:
+            if go.ra < ra_min or go.ra > ra_max:
+                continue
         
         mags = np.zeros(len(go.objects))
         mag_errors = np.zeros(len(go.objects))
@@ -628,7 +666,7 @@ def nebencalibrate_pixel( inputs ):
 
 
 
-def nebencalibrate( band, nside, nside_file, id_strings, operands, precam_map, precam_stars, precal, globals_dir, require_standards=False, max_dets=1e9 ):
+def nebencalibrate( band, nside, nside_file, id_strings, operands, precam_map, precam_stars, precal, globals_dir, require_standards=False, max_dets=1e9, ra_min=-360., ra_max=361., dec_min=91., dec_max=91. ):
     
     if len(precam_stars) == 0 and require_standards:
         print "nebencalibrate: No standards, yet you are requiring standards!"
@@ -657,7 +695,7 @@ def nebencalibrate( band, nside, nside_file, id_strings, operands, precam_map, p
     pix_wobjs = []
     inputs= []
     for p in range(npix):
-        inputs.append( [p, nside, nside_file, band, precal, precam_stars, precam_map, globals_dir, id_strings, operands, max_dets, require_standards] )
+        inputs.append( [p, nside, nside_file, band, precal, precam_stars, precam_map, globals_dir, id_strings, operands, max_dets, require_standards, ra_min, ra_max, dec_min, dec_max] )
         image_id_dicts[p], p_vectors[p], has_precam[p] = nebencalibrate_pixel(inputs[p])
         if require_standards and not has_precam[p] and p_vectors[p] is not None:
             print "No standards found in pixel %d for nside=%d.  Degrading!" %(p,nside)
@@ -758,15 +796,16 @@ def nebencalibrate( band, nside, nside_file, id_strings, operands, precam_map, p
         
         invsigma_matrix = np.tile(invsigma_array, (npix_wobjs,1))
         sum_for_zps = (pix_id_matrix2*invsigma_matrix).sum(axis=1) / sum_invsigma2
-        b_vector = np.append( b_vector, zps - sum_zps_i )
         
         a_submatrix = np.tile(sum_for_zps, (nzps,1) )
         a_submatrix[range(nzps),pix_ids2[range(nzps)]] -= 1.0
         a_submatrix = coo_matrix(a_submatrix)
 
         indices = np.where(a_submatrix.data != 0.)[0]
+        if len(indices) == 0:
+            continue
 
-        if( matrix_size+len(indices) > max_matrix_size ):
+        while( matrix_size+len(indices) > max_matrix_size ):
             a_matrix_xs = np.hstack((a_matrix_xs,np.zeros(max_matrix_size)))
             a_matrix_ys = np.hstack((a_matrix_ys,np.zeros(max_matrix_size)))
             a_matrix_vals = np.hstack((a_matrix_vals,np.zeros(max_matrix_size)))
@@ -777,6 +816,7 @@ def nebencalibrate( band, nside, nside_file, id_strings, operands, precam_map, p
         a_matrix_vals[matrix_size:(matrix_size+len(indices))] = a_submatrix.data[indices]
         matrix_size += len(indices)
 
+        b_vector = np.append( b_vector, zps - sum_zps_i )
         c_vector = np.append(c_vector, invsigma_array)
         
         # add up some stats
@@ -923,7 +963,7 @@ def calibrate_by_filter(config):
         new_zps = None
         success = False
         while not success:
-            new_zps = nebencalibrate( band, calibration['nside'], config['general']['nside_file'], calibration['id_strings'], calibration['operands'], standard_map, standard_stars, precal, config['general']['globals_dir'], require_standards=calibration['require_standards'], max_dets=calibration['max_dets'] )
+            new_zps = nebencalibrate( band, calibration['nside'], config['general']['nside_file'], calibration['id_strings'], calibration['operands'], standard_map, standard_stars, precal, config['general']['globals_dir'], require_standards=calibration['require_standards'], max_dets=calibration['max_dets'], ra_min=config['general']['ra_min'], ra_max=config['general']['ra_max'], dec_min=config['general']['dec_min'], dec_max=config['general']['dec_max'] )
             if new_zps == 'degrade':
                 if calibration['nside'] == 1:
                     calibration['nside'] = 0

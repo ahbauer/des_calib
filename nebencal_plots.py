@@ -16,11 +16,22 @@ from matplotlib.backends.backend_pdf import PdfPages
 from operator import itemgetter, attrgetter
 from rtree import index
 # from scipy.stats import scoreatpercentile
+from scipy.optimize import curve_fit
 from pyspherematch import spherematch
 
 from nebencal_utils import read_precam
 from nebencal_utils import read_sdss
 from nebencal_utils import global_object
+
+
+good_quality_magerr = 0.02
+def good_quality(star):
+    if star['magerr_psf'] < good_quality_magerr:
+        return True
+    return False
+
+def calc_line(x, a, b):
+    return a*x + b
 
 def make_plots(config):
     
@@ -36,10 +47,14 @@ def make_plots(config):
     nside = config['general']['nside_file']
     n_ccds = 63
     match_radius = 1.0/3600.
+    magerr_sys2 = 0.0004
 
     plot_file = 'nebencal_plots_' + band + '.pdf'
     pp = PdfPages(plot_file)
 
+    fileband = band
+    if band == 'y':
+        fileband = 'Y'
 
     # read in any catalogs we would like to treat as standards (i.e. precam, sdss...)
     standard_stars = []
@@ -91,6 +106,11 @@ def make_plots(config):
     fp_ys = []
     fp_xindices = []
     fp_yindices = []
+    # put in a dummy ccd=0
+    fp_xs.append(0.)
+    fp_ys.append(0.)
+    fp_xindices.append(0.)
+    fp_yindices.append(0.)
     for i in range(21,83,1):
         entries = posarray[i].split(" ")
         fp_yindices.append(int(entries[2])-1)
@@ -112,7 +132,7 @@ def make_plots(config):
     dir_files = os.listdir(globals_dir)
     n_globals = 0
     for filename in dir_files:
-        if re.match('gobjs_' + str(band) + '_nside' + str(nside) + '_p', filename) is not None:
+        if re.match('gobjs_' + str(fileband) + '_nside' + str(nside) + '_p', filename) is not None:
             pixel_match = re.search('p(\d+)', filename)
             if pixel_match is None:
                 print "Problem parsing pixel number"
@@ -184,7 +204,21 @@ def make_plots(config):
     
         for i in range(len(inds1)):
             go = global_objs[inds1[i]]
-        
+            
+            if go.dec < config['general']['dec_min'] or go.dec > config['general']['dec_max']:
+                continue
+            if config['general']['ra_min'] > config['general']['ra_max']: # 300 60
+                if go.ra > config['general']['ra_max'] and go.ra < config['general']['ra_min']:
+                    continue
+            else:
+                if go.ra < config['general']['ra_min'] or go.ra > config['general']['ra_max']:
+                    continue
+            
+            # TEMPORARY
+            # go.objects = filter(good_quality, go.objects)
+            # if len(go.objects) < 2:
+            #     continue
+            
             if go.ra > 300.:
                 go.ra -= 360.
             ndet = len(go.objects)
@@ -206,8 +240,8 @@ def make_plots(config):
                 image_id = go.objects[d]['image_id']
                 if image_id == 1:
                     continue
-                ccd = go.objects[d]['ccd']-1
-                spx = int(4*np.floor(ys[d]/512.) + np.floor(xs[d]/512.) + 32*(ccd+1))
+                ccd = go.objects[d]['ccd']
+                spx = int(4*np.floor(ys[d]/512.) + np.floor(xs[d]/512.) + 32*(ccd))
                 fp_r = np.sqrt(fp_xs[ccd]*fp_xs[ccd] + fp_ys[ccd]*fp_ys[ccd])
                 exposureid = go.objects[d]['exposureid']
                 image_ccds[image_id] = ccd
@@ -231,7 +265,7 @@ def make_plots(config):
                         badmag = True
                 if badmag:
                     continue
-                mag_errors2[d] = magerr_psf*magerr_psf + 0.0001
+                mag_errors2[d] = magerr_psf*magerr_psf + magerr_sys2
                 iids[d] = image_id
                 total_magdiffsb.append(mags_before[d] - sdss_match['mag_psf'])
                 total_magdiffsa.append(mags_after[d] - sdss_match['mag_psf'])
@@ -308,6 +342,7 @@ def make_plots(config):
 
     plot_resids_b2_xs = np.array(plot_resids_b2_xs)
     plot_resids_b2_ys = np.array(plot_resids_b2_ys)
+    plot_resids_b2_rs = np.sqrt(plot_resids_b2_xs*plot_resids_b2_xs + plot_resids_b2_ys*plot_resids_b2_ys)
     plot_resids_a2 = np.array(plot_resids_a2)
     plot_resids_b2 = np.array(plot_resids_b2)
     plot_resids_c2 = np.array(plot_resids_c2)
@@ -399,7 +434,7 @@ def make_plots(config):
     image_before_array = []
     image_after_array = []
     n_array = []
-    ccd_array = np.zeros(n_ccds)
+    ccd_array = np.zeros(n_ccds+1)
     ras_35 = []
     decs_35 = []
     for key in image_resids_a:
@@ -412,7 +447,7 @@ def make_plots(config):
         sdss_array.append(sdss_mags[key])
         image_after_array.append(image_afters[key])
         ccd_array[image_ccds[key]] += 1
-        if image_ccds[key] == 34:
+        if image_ccds[key] == 35:
             ras_35.append(image_ras[key])
             decs_35.append(image_decs[key])
     ra_array = np.array(ra_array)
@@ -525,6 +560,17 @@ def make_plots(config):
     ax0 = fig.add_subplot(1,1,1, title=title)
     im0 = ax0.hexbin(plot_resids_b2_xs[indices], plot_resids_b2_ys[indices], plot_resids_d2[indices], gridsize=400, reduce_C_function = np.mean, vmin=-3*sum_rms_after, vmax=3*sum_rms_after) 
     fig.colorbar(im0)
+    pp.savefig()
+    
+    plt.clf()
+    fig = plt.figure()
+    title = "Residual of indiv meas from DES after cal"
+    ax0 = fig.add_subplot(1,1,1, title=title)
+    im0 = ax0.hexbin(plot_resids_b2_rs[indices], plot_resids_d2[indices])
+        
+    popt, pcov = curve_fit(calc_line, plot_resids_b2_rs, plot_resids_d2)
+    ax0.plot([0, 15000], [calc_line(0,popt[0],popt[1]), calc_line(15000,popt[0],popt[1])], linestyle='-')
+
     pp.savefig()
     
     # plt.clf()
