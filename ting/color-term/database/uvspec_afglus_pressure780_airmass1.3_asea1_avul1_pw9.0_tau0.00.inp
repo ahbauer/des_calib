@@ -1,0 +1,17 @@
+atmosphere_file ../data/atmmod/afglus.dat
+solar_file ../data/solar_flux/kurudz_1.0nm.dat
+correlated_k SBDART
+rte_solver disort2
+wavelength 320 1150
+transmittance
+pressure 780
+sza 39.7151372318
+aerosol_season 1
+aerosol_haze 1
+aerosol_vulcan 1
+aerosol_visibility 50
+aerosol_set_tau550 0.0
+altitude 2.241
+h2o_precip 9.0
+output_user lambda edir
+quiet

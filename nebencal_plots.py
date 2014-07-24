@@ -21,6 +21,7 @@ from pyspherematch import spherematch
 
 from nebencal_utils import read_precam
 from nebencal_utils import read_sdss
+from nebencal_utils import read_betoule
 from nebencal_utils import global_object
 
 
@@ -67,8 +68,14 @@ def make_plots(config):
     # to do: add a validation catalog that we didn't calibrate to...
     validation_stars = []
     validation_map = index.Index()
-    read_sdss( validation_stars, validation_map, config['general']['sdss_validation'], band )
-
+    if config['general']['sdss_validation'] != "None":
+        read_sdss( validation_stars, validation_map, config['general']['sdss_validation'], band )
+    elif config['general']['betoule_validation'] != "None":
+        read_betoule( validation_stars, validation_map, config['general']['betoule_validation'], band )
+    else:
+        print "No validation catalog?"
+        exit(1)
+    
     # read in the nominal ccd offsets (zp_phots), which will be our starting point
     zp_list = []
     zp_phots = dict()
@@ -214,6 +221,11 @@ def make_plots(config):
                 if go.ra < config['general']['ra_min'] or go.ra > config['general']['ra_max']:
                     continue
             
+            # TEMPORARY COLOR CUT
+            # if len(go.objects)>0:
+            #     if abs(go.color) > 0.5:
+            #         continue
+            
             # TEMPORARY
             # go.objects = filter(good_quality, go.objects)
             # if len(go.objects) < 2:
@@ -233,17 +245,17 @@ def make_plots(config):
             ys = np.zeros(ndet)
             d=0
             for d0 in range(ndet):
-                mag_psf = go.objects[d]['mag_psf']
-                magerr_psf = go.objects[d]['magerr_psf']
-                xs[d]= go.objects[d]['x_image']
-                ys[d] = go.objects[d]['y_image']
-                image_id = go.objects[d]['image_id']
+                mag_psf = go.objects[d0]['mag_psf']
+                magerr_psf = go.objects[d0]['magerr_psf']
+                xs[d]= go.objects[d0]['x_image']
+                ys[d] = go.objects[d0]['y_image']
+                image_id = go.objects[d0]['image_id']
                 if image_id == 1:
                     continue
-                ccd = go.objects[d]['ccd']
+                ccd = go.objects[d0]['ccd']
                 spx = int(4*np.floor(ys[d]/512.) + np.floor(xs[d]/512.) + 32*(ccd))
                 fp_r = np.sqrt(fp_xs[ccd]*fp_xs[ccd] + fp_ys[ccd]*fp_ys[ccd])
-                exposureid = go.objects[d]['exposureid']
+                exposureid = go.objects[d0]['exposureid']
                 image_ccds[image_id] = ccd
                 ccds[d] = ccd
                 mags_before[d] = mag_psf
@@ -257,8 +269,8 @@ def make_plots(config):
                 for zps in zp_list:
                     operand = 1
                     if zps['operand'] not in [1,None,'None']:
-                        operand = go.objects[d][zps['operand']]
-                    id_string = go.objects[d][zps['id_string']]
+                        operand = go.objects[d0][zps['operand']]
+                    id_string = go.objects[d0][zps['id_string']]
                     if id_string in zps:
                         mags_after[d] += operand*zps[id_string]
                     else:
@@ -505,18 +517,26 @@ def make_plots(config):
     title = "Resid of mean from SDSS by ra and dec before cal"
     xlab = "RA"
     ylab = "Dec"
-    ax0 = fig.add_subplot(111, xlabel=xlab, ylabel=ylab, title=title)
-    im0 = ax0.hexbin(ra_array[indices], dec_array[indices], diffb_array[indices], vmin=np.median(total_magdiffsb)-3*mdiffstdb, vmax=np.median(total_magdiffsb)+3*mdiffstdb)
+    ax0 = fig.add_subplot(211, xlabel=xlab, ylabel=ylab, title=title)
+    im0 = ax0.hexbin(ra_array[indices], dec_array[indices], diffb_array[indices], vmin=np.median(total_magdiffsb)-2*mdiffstdb, vmax=np.median(total_magdiffsb)+2*mdiffstdb,gridsize=(int(np.max(ra_array)-np.min(ra_array)),int(np.max(dec_array)-np.min(dec_array))))
     fig.colorbar(im0)
-    pp.savefig()
+    ax0.set_aspect('equal')
+    # pp.savefig()
 
-    plt.clf()
+    # plt.clf()
     title = "Resid of mean from SDSS by ra and dec after cal"
     xlab = "RA"
     ylab = "Dec"
+    ax1 = fig.add_subplot(212, xlabel=xlab, ylabel=ylab, title=title)
+    im1 = ax1.hexbin(ra_array[indices], dec_array[indices], diffa_array[indices], vmin=np.median(total_magdiffsa)-2*mdiffstda, vmax=np.median(total_magdiffsa)+2*mdiffstda,gridsize=(int(np.max(ra_array)-np.min(ra_array)),int(np.max(dec_array)-np.min(dec_array))))
+    fig.colorbar(im1)
+    ax1.set_aspect('equal')
+    pp.savefig()
+    
+    plt.clf()
+    title = "Resid of mean from SDSS by ra after cal"
     ax0 = fig.add_subplot(111, xlabel=xlab, ylabel=ylab, title=title)
-    im0 = ax0.hexbin(ra_array[indices], dec_array[indices], diffa_array[indices], vmin=np.median(total_magdiffsa)-3*mdiffstda, vmax=np.median(total_magdiffsa)+3*mdiffstda)
-    fig.colorbar(im0)
+    ax0.hexbin(ra_array[indices],diffa_array[indices])
     pp.savefig()
 
     # the plots get really big at this point, so let's try plotting a subsample.

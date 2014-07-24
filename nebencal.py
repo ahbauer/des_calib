@@ -21,6 +21,9 @@ import yaml
 from nebencal_utils import read_precam
 from nebencal_utils import read_sdss
 from nebencal_utils import global_object
+colorterm_dir = '/Users/bauer/software/python/des/des_calib/ting/color-term'
+sys.path.append(colorterm_dir)
+import color_term_cal
 
 """
 nebencal.py
@@ -43,7 +46,7 @@ def good_quality(star):
     return False
 
 def standard_quality(star):
-    if star['image_id'] != 1 and star['magerr_psf'] < good_quality_magerr and star['gskyphot'] == 1 and star['x_image']>100. and star['x_image']<1900. and star['y_image']>100. and star['y_image']<3950.:
+    if star['image_id'] != 1 and star['magerr_psf'] < good_quality_magerr and star['gskyphot'] == 1 and star['x_image']>100. and star['x_image']<1900. and star['y_image']>100. and star['y_image']<3950.and star['cloud_nomad']<0.2:
         return True
     else:
         return False
@@ -61,7 +64,7 @@ def unmatched(star):
 
 def nebencalibrate_pixel( inputs ):
     
-    [pix, nside, nside_file, band, precal, precam_stars, precam_map, globals_dir, id_strings, operands, max_dets, require_standards, ra_min, ra_max, dec_min, dec_max] = inputs
+    [pix, nside, nside_file, band, precal, precam_stars, precam_map, globals_dir, id_strings, operands, max_dets, require_standards, ra_min, ra_max, dec_min, dec_max, use_color_terms, mag_classes] = inputs
     
     use_precam = 0
     if len(precam_stars) > 0:
@@ -105,6 +108,35 @@ def nebencalibrate_pixel( inputs ):
     precam_count = 0
     
     image_id_count = dict()
+    
+    
+    # read in the CCD positions in the focal plane
+    posfile = open("/Users/bauer/surveys/DES/ccdPos-v2.par", 'r')
+    posarray = posfile.readlines()
+    fp_xs = []
+    fp_ys = []
+    fp_xindices = []
+    fp_yindices = []
+    # put in a dummy ccd=0
+    fp_xs.append(0.)
+    fp_ys.append(0.)
+    fp_xindices.append(0.)
+    fp_yindices.append(0.)
+    for i in range(21,83,1):
+        entries = posarray[i].split(" ")
+        fp_yindices.append(int(entries[2])-1)
+        fp_xindices.append(int(entries[3])-1)
+        fp_xs.append(66.6667*(float(entries[4])-211.0605) - 1024) # in pixels
+        fp_ys.append(66.6667*float(entries[5]) - 2048)
+    # fp_ys.append(fp_xs[-1])
+    # fp_xs.append(fp_ys[-1])
+    fp_yindices.append(fp_yindices[-1])
+    fp_xindices.append(fp_xindices[-1])
+    fp_xoffsets = [4,3,2,1,1,0,0,1,1,2,3,4]
+    fp_xindices = 2*np.array(fp_xindices)
+    fp_yindices = np.array(fp_yindices)
+    # print "parsed focal plane positions for %d ccds" %len(fp_xs)
+    
     
     # read the global objects in from the files.
     global_objs_list = []
@@ -202,7 +234,7 @@ def nebencalibrate_pixel( inputs ):
     a_matrix_xs = np.zeros(max_matrix_size)
     a_matrix_ys = np.zeros(max_matrix_size)
     a_matrix_vals = np.zeros(max_matrix_size)
-
+    
     # is it worth finding out max_nimgs correctly?  YES.
     # also, check to see if there are too many objects per image/exposure
     imgids = dict()
@@ -358,6 +390,16 @@ def nebencalibrate_pixel( inputs ):
             mags_for_cal[d_for_cal] = star['mag_psf']
             mag_errors_for_cal[d_for_cal] = star['magerr_psf']
             
+            if use_color_terms and not ( use_precam and star['exposureid'] == precam_stars[0]['exposureid'] ):
+                if star['exposureid'] not in mag_classes:
+                    pwv = color_term_cal.get_pwv(star['mjd'])
+                    mag_classes[star['exposureid']] = color_term_cal.color_term_correction(band,pwv,star['airmass'])
+                fp_x = star['x_image'] + fp_xs[star['ccd']]
+                fp_y = star['x_image'] + fp_ys[star['ccd']]
+                fp_r = np.sqrt(fp_x*fp_x + fp_y*fp_y)/14880.1 # the largest fp_r i saw in an example run
+                color_term = color_term_cal.fit_color_position(mag_classes[star['exposureid']],go.color,fp_r)
+                mags_for_cal[d_for_cal] += color_term
+                
             for p in precal:
                 [pre_vector, precal_id_string, precal_operand, pre_median] = p
                 if star[precal_id_string] in pre_vector:
@@ -532,13 +574,6 @@ def nebencalibrate_pixel( inputs ):
                 print "%s: Normalizing to the median of the zeropoints: %e" %(id_string, median)
                 p_vector[p_vector_indices] -= median
             p_base += max_nimgs[nid]
-    # else:
-    #     for nid,id_string in enumerate(id_strings):
-    #         # deal with the indices for each id_string separately
-    #         p_vector_indices = image_id_dict[nid].values()
-    #         median = np.median(p_vector[p_vector_indices])
-    #         print "%s: Normalizing to the median of the zeropoints: %e" %(id_string, median)
-    #         p_vector[p_vector_indices] -= median
     
     print "Solution:"
     print p_vector.shape
@@ -666,7 +701,7 @@ def nebencalibrate_pixel( inputs ):
 
 
 
-def nebencalibrate( band, nside, nside_file, id_strings, operands, precam_map, precam_stars, precal, globals_dir, require_standards=False, max_dets=1e9, ra_min=-360., ra_max=361., dec_min=91., dec_max=91. ):
+def nebencalibrate( band, nside, nside_file, id_strings, operands, precam_map, precam_stars, precal, globals_dir, require_standards=False, max_dets=1e9, ra_min=-360., ra_max=361., dec_min=91., dec_max=91., use_color_terms=False, mag_classes={} ):
     
     if len(precam_stars) == 0 and require_standards:
         print "nebencalibrate: No standards, yet you are requiring standards!"
@@ -695,7 +730,7 @@ def nebencalibrate( band, nside, nside_file, id_strings, operands, precam_map, p
     pix_wobjs = []
     inputs= []
     for p in range(npix):
-        inputs.append( [p, nside, nside_file, band, precal, precam_stars, precam_map, globals_dir, id_strings, operands, max_dets, require_standards, ra_min, ra_max, dec_min, dec_max] )
+        inputs.append( [p, nside, nside_file, band, precal, precam_stars, precam_map, globals_dir, id_strings, operands, max_dets, require_standards, ra_min, ra_max, dec_min, dec_max, use_color_terms, mag_classes] )
         image_id_dicts[p], p_vectors[p], has_precam[p] = nebencalibrate_pixel(inputs[p])
         if require_standards and not has_precam[p] and p_vectors[p] is not None:
             print "No standards found in pixel %d for nside=%d.  Degrading!" %(p,nside)
@@ -946,12 +981,17 @@ def calibrate_by_filter(config):
         read_precam( precam_stars, precam_map, config['general']['precam_filename'], band )
     if config['general']['use_sdss']:
         read_sdss( precam_stars, precam_map, config['general']['sdss_filename'], band )
+    if config['general']['use_betoule']:
+        read_betoule( precam_stars, precam_map, config['general']['betoule_filename'], band )
     
     
     # calibrate!
     
     # use the zp_phots as a starting point to our calibration
     precal = [[zp_phots, 'ccd', 1, np.median(zp_phots.values())]]
+    
+    # initialize the color term structure, which will be filled up as needed during the calibration
+    colorterm_class = {}
     
     for calibration in config['calibrations']:
         print "\nStarting calibration on ids %s, operands %s\n" %(calibration['id_strings'], calibration['operands'])
@@ -963,7 +1003,7 @@ def calibrate_by_filter(config):
         new_zps = None
         success = False
         while not success:
-            new_zps = nebencalibrate( band, calibration['nside'], config['general']['nside_file'], calibration['id_strings'], calibration['operands'], standard_map, standard_stars, precal, config['general']['globals_dir'], require_standards=calibration['require_standards'], max_dets=calibration['max_dets'], ra_min=config['general']['ra_min'], ra_max=config['general']['ra_max'], dec_min=config['general']['dec_min'], dec_max=config['general']['dec_max'] )
+            new_zps = nebencalibrate( band, calibration['nside'], config['general']['nside_file'], calibration['id_strings'], calibration['operands'], standard_map, standard_stars, precal, config['general']['globals_dir'], require_standards=calibration['require_standards'], max_dets=calibration['max_dets'], ra_min=config['general']['ra_min'], ra_max=config['general']['ra_max'], dec_min=config['general']['dec_min'], dec_max=config['general']['dec_max'], use_color_terms=config['general']['use_color_terms'], mag_classes=colorterm_class )
             if new_zps == 'degrade':
                 if calibration['nside'] == 1:
                     calibration['nside'] = 0

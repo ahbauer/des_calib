@@ -10,6 +10,7 @@ class global_object(object):
     def __init__(self):
         self.ra = None
         self.dec = None
+        self.color = None
         self.objects = []
         
 def read_precam( precam_stars, precam_map, filename, band ):
@@ -33,6 +34,9 @@ def read_precam( precam_stars, precam_map, filename, band ):
         star['image_id'] = 1
         star['exposureid'] = 1
         star['superpix'] = -1
+        star['airmass'] = 0
+        star['color'] = 1.e-9
+        star['cloud_nomad'] = 1.0
         star['band'] = band
         star['matched'] = False
         precam_stars.append(star)
@@ -77,9 +81,42 @@ def read_sdss( sdss_stars, sdss_map, filename, band ):
         sdss_obj['image_id'] = 1
         sdss_obj['exposureid'] = 1
         sdss_obj['superpix'] = -1
+        sdss_obj['airmass'] = 0
+        sdss_obj['color'] = 1.e-9
+        sdss_obj['cloud_nomad'] = 1.0
         sdss_obj['matched'] = False
         if sdss_obj['mag_psf'] > 0.:
             sdss_stars.append(sdss_obj)
             sdss_map.insert( count, (sdss_obj['ra'],sdss_obj['dec'],sdss_obj['ra'],sdss_obj['dec']) )
             count += 1
     print "Read in %d SDSS standards" %count
+
+def read_betoule( sdss_stars, sdss_map, filename, band ):
+    sdssfile = open(filename, 'r')
+    count=0
+    for line in sdssfile:
+        entries = line.split(" ")
+        sdss_obj = dict()
+        sdss_obj['ra'] = float(entries[0])
+        sdss_obj['dec'] = float(entries[1])
+        sdss_obj['mag_psf'] = float(entries[2])
+        sdss_obj['magerr_psf'] = float(entries[3])
+        
+        sdss_obj['band'] = band
+        sdss_obj['x_image'] = 1.
+        sdss_obj['y_image'] = 1.
+        sdss_obj['fp_r'] = 1.
+        sdss_obj['secz'] = 1.
+        sdss_obj['ccd'] = 0
+        sdss_obj['image_id'] = 1
+        sdss_obj['exposureid'] = 1
+        sdss_obj['superpix'] = -1
+        sdss_obj['airmass'] = 0
+        sdss_obj['color'] = 1.e-9
+        sdss_obj['cloud_nomad'] = 1.0
+        sdss_obj['matched'] = False
+        if sdss_obj['mag_psf'] > 0.:
+            sdss_stars.append(sdss_obj)
+            sdss_map.insert( count, (sdss_obj['ra'],sdss_obj['dec'],sdss_obj['ra'],sdss_obj['dec']) )
+            count += 1
+    print "Read in %d Betoule standards" %count

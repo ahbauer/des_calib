@@ -17,6 +17,11 @@ class FinalCutObj(IsDescription):
     skysigma = Float32Col()
     exptime = Float32Col()
     airmass = Float32Col()
+    ha = StringCol(16)
+    zd = Float32Col()
+    telera = Float32Col()
+    teledec = Float32Col()
+    mjd = Float32Col()
     band = StringCol(4)
     ccd = Int32Col()
     image_fwhm_arcsec = Float32Col()
@@ -26,10 +31,10 @@ class FinalCutObj(IsDescription):
     lskyphot = Int32Col()
     gskyhot = Float32Col()
     lskyhot = Float32Col()
-    
+    cloud_nomad = Float32Col()
 
 def assign_obj(object, entries):
-    object['exposureid'] = int(entries[0])
+    object['exposureid'] = int(entries[36]) # int(entries[0])
     object['imageid'] = int(entries[1])
     object['object_id'] = int(entries[2])
     object['x_image'] = float(entries[3])
@@ -45,21 +50,31 @@ def assign_obj(object, entries):
     object['band'] = entries[18]
     object['ccd'] = int(entries[19])
     object['airmass'] = float(entries[20])
-    object['exptime'] = float(entries[22])
-    object['skybrite'] = float(entries[24])
-    object['skysigma'] = float(entries[25])
-    object['image_fwhm_arcsec'] = float(entries[27])
-    if entries[57] == 'T':
+    object['ha'] = entries[21]
+    object['zd'] = float(entries[22])
+    object['telera'] = float(entries[23])
+    object['teledec'] = float(entries[24])
+    object['mjd'] = float(entries[25])
+    object['exptime'] = float(entries[26])
+    object['skybrite'] = float(entries[28])
+    object['skysigma'] = float(entries[29])
+    object['image_fwhm_arcsec'] = float(entries[31])
+    if entries[52] == '':
+        print 'Filling in for an empty cloud_nomad'
+        object['cloud_nomad'] = 0.5 # give missing values a bad value
+    else:
+        object['cloud_nomad'] = float(entries[52])
+    if entries[61] == 'T':
         object['gskyphot'] = 1
     else:
         object['gskyphot'] = 0
-    if entries[58] == 'T':
+    if entries[62] == 'T':
         object['lskyphot'] = 1
     else:
         object['lskyphot'] = 0
-    object['gskyhot'] = float(entries[60])
-    if entries[62]:
-        object['lskyhot'] = float(entries[62])
+    object['gskyhot'] = float(entries[64])
+    if entries[66]:
+        object['lskyhot'] = float(entries[66])
     else:
         object['lskyhot'] = 0.0
 
@@ -101,6 +116,7 @@ for line in file:
         object_r.append()
     elif entries[18] == 'i':
         assign_obj( object_i, entries )
+        # print "{0} {1} {2}".format(object_i['ra'], object_i['dec'], object_i['gskyhot'])
         object_i.append()
     elif entries[18] == 'z':
         assign_obj( object_z, entries )
@@ -116,7 +132,7 @@ table_i.flush()
 table_z.flush()
 table_y.flush()
 
-print "Tables added with lengths %d %d %d %d %d" %(table_u.nrows, table_g.nrows, table_r.nrows, table_i.nrows, table_z.nrows)
+print "Tables added with lengths %d %d %d %d %d %d" %(table_u.nrows, table_g.nrows, table_r.nrows, table_i.nrows, table_z.nrows, table_y.nrows)
 
 h5file.close()
 file.close()
