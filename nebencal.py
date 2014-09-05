@@ -17,7 +17,6 @@ from scipy.stats import scoreatpercentile
 import tables
 import healpy
 import yaml
-# from pyspherematch import spherematch
 from nebencal_utils import read_precam
 from nebencal_utils import read_sdss
 from nebencal_utils import global_object
@@ -46,13 +45,13 @@ def good_quality(star):
     return False
 
 def standard_quality(star):
-    if star['image_id'] != 1 and star['magerr_psf'] < good_quality_magerr and star['gskyphot'] == 1 and star['x_image']>100. and star['x_image']<1900. and star['y_image']>100. and star['y_image']<3950.and star['cloud_nomad']<0.2:
+    if star['image_id'] != 1 and star['magerr_psf'] < good_quality_magerr and star['gskyphot'] == 1 and star['x_image']>100. and star['x_image']<1900. and star['y_image']>100. and star['y_image']<3950. and star['cloud_nomad']<0.2:
         return True
     else:
         return False
 
 def ok_quality(star):
-    if star['magerr_psf'] < 0.04:
+    if star['magerr_psf'] < good_quality_magerr*2.0 and star['x_image']>100. and star['x_image']<1900. and star['y_image']>100. and star['y_image']<3950.:
         return True
     return False
 
@@ -61,84 +60,8 @@ def unmatched(star):
         return False
     return True
 
-
-def nebencalibrate_pixel( inputs ):
+def read_global_objs(band, globals_dir, nside, nside_file, pix):
     
-    [pix, nside, nside_file, band, precal, precam_stars, precam_map, globals_dir, id_strings, operands, max_dets, require_standards, ra_min, ra_max, dec_min, dec_max, use_color_terms, mag_classes] = inputs
-    
-    use_precam = 0
-    if len(precam_stars) > 0:
-        use_precam = 1
-        
-    max_nepochs = 5 # ick!  just a starting point, though.
-    magerr_sys2 = 0.0004
-    
-    precam_ids = dict()
-    for nid, id_string in enumerate(id_strings):
-        if len(precam_stars) > 0:
-            precam_ids[nid] = precam_stars[0][id_string]
-        else:
-            precam_ids[nid] = None
-    
-    stars = []
-    star_map = index.Index()
-    global_objects = []
-    has_precam = 0
-    p_vector = None
-    
-    imgids = dict()
-    image_id_dict = dict()
-    for nid, id_string in enumerate(id_strings):
-        image_id_dict[nid] = dict()
-    
-    # while we're at it, add stuff to the matrices so we don't have to loop over global objects.
-    
-    match_radius = 1.0/3600.
-    ndets = 0
-    b_vector = []
-    a_matrix = None
-    c_vector = []
-    gcount = 0
-    sum_rms = 0.
-    n_rms = 0
-    matrix_size = 0
-    n_good_e = 0
-    n_bad_e = 0
-    
-    precam_count = 0
-    
-    image_id_count = dict()
-    
-    
-    # read in the CCD positions in the focal plane
-    posfile = open("/Users/bauer/surveys/DES/ccdPos-v2.par", 'r')
-    posarray = posfile.readlines()
-    fp_xs = []
-    fp_ys = []
-    fp_xindices = []
-    fp_yindices = []
-    # put in a dummy ccd=0
-    fp_xs.append(0.)
-    fp_ys.append(0.)
-    fp_xindices.append(0.)
-    fp_yindices.append(0.)
-    for i in range(21,83,1):
-        entries = posarray[i].split(" ")
-        fp_yindices.append(int(entries[2])-1)
-        fp_xindices.append(int(entries[3])-1)
-        fp_xs.append(66.6667*(float(entries[4])-211.0605) - 1024) # in pixels
-        fp_ys.append(66.6667*float(entries[5]) - 2048)
-    # fp_ys.append(fp_xs[-1])
-    # fp_xs.append(fp_ys[-1])
-    fp_yindices.append(fp_yindices[-1])
-    fp_xindices.append(fp_xindices[-1])
-    fp_xoffsets = [4,3,2,1,1,0,0,1,1,2,3,4]
-    fp_xindices = 2*np.array(fp_xindices)
-    fp_yindices = np.array(fp_yindices)
-    # print "parsed focal plane positions for %d ccds" %len(fp_xs)
-    
-    
-    # read the global objects in from the files.
     global_objs_list = []
     
     # if the pixelization resolution is the same as the file convention, then this is easy.
@@ -146,7 +69,7 @@ def nebencalibrate_pixel( inputs ):
         filename = 'gobjs_' + str(band) + '_nside' + str(nside) + '_p' + str(pix)
         # if there's no data for this pixel, forget it: nothing to calibrate.
         if not os.path.isfile(os.path.join(globals_dir,filename)):
-            return None, None, None
+            return None
         # print >> sys.stderr, "Reading in file-resolution pixel %d" %pix
         file = open(os.path.join(globals_dir,filename), 'rb')
         global_objs_list = cPickle.load(file)
@@ -154,7 +77,7 @@ def nebencalibrate_pixel( inputs ):
         
         # if there weren't any objects for this low-res pixel, then we're done.
         if len(global_objs_list) == 0:
-            return None, None, None
+            return None
         
         # now include the 4 nearest neighboring pixels.
         all_neighbors = healpy.pixelfunc.get_all_neighbours(nside, pix)
@@ -211,7 +134,7 @@ def nebencalibrate_pixel( inputs ):
                 file.close()
         # if there weren't any objects for this low-res pixel, then we're done.
         if len(global_objs_list) == 0:
-            return None, None, None
+            return None
             
         # now include the four nearest neighbors
         all_neighbors = healpy.pixelfunc.get_all_neighbours(nside, pix_lowres_nest, nest=True)
@@ -227,468 +150,870 @@ def nebencalibrate_pixel( inputs ):
                     file = open(os.path.join(globals_dir,filename), 'rb')
                     global_objs_list.extend(cPickle.load(file))
                     file.close()
+    
+    print 'read_global_objs: Returning {0} objects for pixel {1}'.format(len(global_objs_list),pix)
+    return global_objs_list
+
+   
+def nebencalibrate_pixel( inputs ):
+    
+    [pix, nside, nside_file, band, precal, precam_stars, precam_map, globals_dir, id_strings, operands_in, max_dets, require_standards, ra_min, ra_max, dec_min, dec_max, use_color_terms, mag_classes] = inputs
+    
+    use_precam = 0
+    if len(precam_stars) > 0:
+        use_precam = 1
+        
+    max_nepochs = 5 # ick!  just a starting point, though.
+    magerr_sys2 = 0.0004
+    
+    precam_ids = dict()
+    for nid, id_string in enumerate(id_strings):
+        if len(precam_stars) > 0:
+            precam_ids[nid] = precam_stars[0][id_string]
+        else:
+            precam_ids[nid] = None
+    
+    
+    match_radius = 1.0/3600.
+    
+    n_iters = 3 
+    
+    # read in the CCD positions in the focal plane
+    posfile = open("/Users/bauer/surveys/DES/ccdPos-v2.par", 'r')
+    posarray = posfile.readlines()
+    fp_xs = []
+    fp_ys = []
+    fp_xindices = []
+    fp_yindices = []
+    # put in a dummy ccd=0
+    fp_xs.append(0.)
+    fp_ys.append(0.)
+    fp_xindices.append(0.)
+    fp_yindices.append(0.)
+    for i in range(21,83,1):
+        entries = posarray[i].split(" ")
+        fp_yindices.append(int(entries[2])-1)
+        fp_xindices.append(int(entries[3])-1)
+        fp_xs.append(66.6667*(float(entries[4])-211.0605) - 1024) # in pixels
+        fp_ys.append(66.6667*float(entries[5]) - 2048)
+    # fp_ys.append(fp_xs[-1])
+    # fp_xs.append(fp_ys[-1])
+    fp_yindices.append(fp_yindices[-1])
+    fp_xindices.append(fp_xindices[-1])
+    fp_xoffsets = [4,3,2,1,1,0,0,1,1,2,3,4]
+    fp_xindices = 2*np.array(fp_xindices)
+    fp_yindices = np.array(fp_yindices)
+    # print "parsed focal plane positions for %d ccds" %len(fp_xs)
+    
+    
+    # read the global objects in from the files.
+    global_objs_list = read_global_objs(band, globals_dir, nside, nside_file, pix)
+    if global_objs_list is None:
+        return None, None, None, None
         
     print "Starting pixel %d: %d global objects" %(pix, len(global_objs_list))
     
-    max_matrix_size = len(global_objs_list)*max_nepochs
-    a_matrix_xs = np.zeros(max_matrix_size)
-    a_matrix_ys = np.zeros(max_matrix_size)
-    a_matrix_vals = np.zeros(max_matrix_size)
     
-    # is it worth finding out max_nimgs correctly?  YES.
-    # also, check to see if there are too many objects per image/exposure
-    imgids = dict()
-    img_ndets = dict()
-    img_errs = dict()
-    max_errors = dict()
-    ndet_for_cal = 0
-    ndet_for_summi = 0
-    worst_ok_err = dict()
+    bad_idvals = []
+    for nid, id_string in enumerate(id_strings):
+        bad_idvals.append({})
     
-    obj_inarea = False
-    for go in global_objs_list:
+    
+    nimgs_flagged = 1
+    iteration = 0
+    while( nimgs_flagged != 0 ):
+        iteration += 1
+#    for iteration in range(n_iters):
+    
+        ndets = 0
+        b_vector = []
+        a_matrix = None
+        c_vector = []
+        gcount = 0
+        sum_rms = 0.
+        n_rms = 0
+        matrix_size = 0
+        n_good_e = 0
+        n_bad_e = 0
+    
+        precam_count = 0
+    
+        image_id_count = dict()
+    
+        stars = []
+        star_map = index.Index()
+        has_precam = 0
+        p_vector = None
+    
+        imgids = dict()
+        image_id_dict = dict()
+        for nid, id_string in enumerate(id_strings):
+            image_id_dict[nid] = dict()
+    
+        max_matrix_size = len(global_objs_list)*max_nepochs
+        a_matrix_xs = np.zeros(max_matrix_size)
+        a_matrix_ys = np.zeros(max_matrix_size)
+        a_matrix_vals = np.zeros(max_matrix_size)
+    
+    
+        # is it worth finding out max_nimgs correctly?  YES.
+        # also, check to see if there are too many objects per image/exposure
+        imgids = dict()
+        img_ndets = dict()
+        img_errs = dict()
+        max_errors = dict()
+        ndet = 0
+        worst_ok_err = dict()
+    
+        obj_inarea = False
+        for go in global_objs_list:
         
-        if go.dec < dec_min or go.dec > dec_max:
-            continue
-        if ra_min > ra_max: # 300 60
-            if go.ra > ra_max and go.ra < ra_min:
+            if go.dec < dec_min or go.dec > dec_max:
                 continue
-        else:
-            if go.ra < ra_min or go.ra > ra_max:
-                continue
-
-        # cut out objects that are bad quality!
-        go.objects = filter(good_quality, go.objects)
-        if len(go.objects) < 2:
-            continue
-        
-        obj_inarea = True
-        
-        for obj in go.objects:
-            # if bad quality (or precam), don't use for calibration
-            if standard_quality(obj):
-                obj['for_mean'] = True
-                ndet_for_summi += 1
+            if ra_min > ra_max: # 300 60
+                if go.ra > ra_max and go.ra < ra_min:
+                    continue
             else:
-                obj['for_mean'] = False
-            ndet_for_cal += 1
+                if go.ra < ra_min or go.ra > ra_max:
+                    continue
+        
+            # cut out objects that are bad quality!
+            go.objects = filter(ok_quality, go.objects)
+            if len(go.objects) < 2:
+                continue
+        
+            obj_inarea = True
+        
+            for obj in go.objects:
             
-            for nid, id_string in enumerate(id_strings):
-                
-                if nid not in img_ndets:
-                    img_ndets[nid] = dict()
-                    img_errs[nid] = dict()
-                    worst_ok_err[nid] = dict()
-                    imgids[nid] = dict()
-                
-                image_id = obj[id_string]
-                imgids[nid][image_id] = True
-                
-                if obj[id_string] in img_ndets[nid]:
-                    img_ndets[nid][obj[id_string]] += 1
-                    if obj['magerr_psf'] < worst_ok_err[nid][obj[id_string]][1]:
-                        # replace the current worst error in the list
-                        img_errs[nid][obj[id_string]][worst_ok_err[nid][obj[id_string]][0]] = obj['magerr_psf']
-                        # now what's the worst?
-                        max_index = np.argmax(img_errs[nid][obj[id_string]])
-                        worst_ok_err[nid][obj[id_string]] = [max_index, img_errs[nid][obj[id_string]][max_index]]
-                else:
-                    img_ndets[nid][obj[id_string]] = 0
-                    img_errs[nid][obj[id_string]] = np.ones(max_dets) #[obj['magerr_psf']]
-                    worst_ok_err[nid][obj[id_string]] = [0,1.0] # index, value
-            
-        if use_precam:
-            ra_match_radius = match_radius/math.cos(go.dec*math.pi/180.)
-            dec_match_radius = match_radius
-            match_area = (go.ra-ra_match_radius, go.dec-dec_match_radius,
-                            go.ra+ra_match_radius, go.dec+dec_match_radius)
-            det_indices = list(precam_map.intersection(match_area))
-            if len(det_indices) == 1:
-                ndet_for_cal += 1
-                precam_star = precam_stars[det_indices[0]]
-                precam_star['for_mean'] = False
-                go.objects.append(precam_star)
+                # if bad quality (or precam), don't use for calibration
+                # (don't use at all!)
+                ok_idval = True
                 for nid, id_string in enumerate(id_strings):
-                    precam_id = precam_ids[nid]
-                    if nid not in imgids:
-                        imgids[nid] = dict()
+                    if obj[id_string] in bad_idvals[nid]:
+                        ok_idval = False
+                if standard_quality(obj) and ok_idval:
+                    obj['for_mean'] = True
+                    ndet += 1
+                else: # don't use at all!
+                    obj['for_mean'] = False
+                    continue
+            
+                for nid, id_string in enumerate(id_strings):
+                
+                    if nid not in img_ndets:
+                        img_ndets[nid] = dict()
+                        img_errs[nid] = dict()
                         worst_ok_err[nid] = dict()
-                    imgids[nid][precam_id] = True
-                    worst_ok_err[nid][precam_id] = [0,1.0] # don't cut any precam objects
-                precam_count += 1
-
-    if not obj_inarea:
-        return None, None, None
-
-    max_nimgs = dict()
-    max_nimgs_total = 0
-    for nid, id_string in enumerate(id_strings):
-        if nid in imgids.keys():
-            max_nimgs[nid] = len(imgids[nid].keys())
-            max_nimgs_total += max_nimgs[nid]
-    img_connectivity = None
-    if require_standards:
-        if len(id_strings) == 1:
-            img_connectivity = np.zeros((max_nimgs[0], max_nimgs[0]), dtype='int')
-    
-    print "Finished first pass through global objects"
-    
-    for nid, id_string in enumerate(id_strings):
-        n_to_clip = 0
-        for i in worst_ok_err[nid].keys():
-            if worst_ok_err[nid][i][1] < 1.:
-                n_to_clip += 1
-        print "%s: %d regions to calibrate, %d with a clipped number of detections" %(id_string, len(worst_ok_err[nid].keys()), n_to_clip)
-    
-    for go in global_objs_list:
-        
-        if len(go.objects) < 2:
-            continue
-        
-        if go.dec < dec_min or go.dec > dec_max:
-            continue
-        if ra_min > ra_max: # 300 60
-            if go.ra > ra_max and go.ra < ra_min:
-                continue
-        else:
-            if go.ra < ra_min or go.ra > ra_max:
-                continue
+                        imgids[nid] = dict()
                 
-        # cut out the bad objects for ALL id strings!  (all calibration identifiers)
-        for nid,id_string in enumerate(id_strings):
-            go.objects = [obj for obj in go.objects if obj['magerr_psf'] < worst_ok_err[nid][obj[id_string]][1]]
-        
-        if len(go.objects) < 2:
-            continue
-        
-        ndet_for_summi = len([obj for obj in go.objects if obj['for_mean'] == True] )
-        ndet_for_cal = len(go.objects)
-        ra = go.ra
-        dec = go.dec
-        
-        if ndet_for_summi < 2:
-            continue
-        
-        mags_for_summi = np.zeros(ndet_for_summi)
-        mag_errors_for_summi = np.zeros(ndet_for_summi)
-        mags_for_cal = np.zeros(ndet_for_cal)
-        mag_errors_for_cal = np.zeros(ndet_for_cal)
-        image_ids = dict()
-        image_id_matrix = dict()
-        operands_for_cal = dict()
-        for nid,id_string in enumerate(id_strings):
-            image_ids[nid] = np.zeros(ndet_for_cal, dtype=np.int)
-            image_id_matrix[nid] = np.zeros([max_nimgs[nid],ndet_for_cal], dtype=np.int)
-            operands_for_cal[nid] = np.zeros(ndet_for_cal)
-        d_for_summi = 0
-        d_for_cal = 0
-        for star in go.objects:
-            
-            if star[id_strings[0]] != precam_ids[0]: # if not precam  CHEAP HACK
-                star['magerr_psf'] = np.sqrt(star['magerr_psf']*star['magerr_psf'] + magerr_sys2)
-            
-            mags_for_cal[d_for_cal] = star['mag_psf']
-            mag_errors_for_cal[d_for_cal] = star['magerr_psf']
-            
-            if use_color_terms and not ( use_precam and star['exposureid'] == precam_stars[0]['exposureid'] ):
-                if star['exposureid'] not in mag_classes:
-                    pwv = color_term_cal.get_pwv(star['mjd'])
-                    mag_classes[star['exposureid']] = color_term_cal.color_term_correction(band,pwv,star['airmass'])
-                fp_x = star['x_image'] + fp_xs[star['ccd']]
-                fp_y = star['x_image'] + fp_ys[star['ccd']]
-                fp_r = np.sqrt(fp_x*fp_x + fp_y*fp_y)/14880.1 # the largest fp_r i saw in an example run
-                color_term = color_term_cal.fit_color_position(mag_classes[star['exposureid']],go.color,fp_r)
-                mags_for_cal[d_for_cal] += color_term
+                    image_id = obj[id_string]
+                    imgids[nid][image_id] = True
                 
-            for p in precal:
-                [pre_vector, precal_id_string, precal_operand, pre_median] = p
-                if star[precal_id_string] in pre_vector:
-                    coeff = None
-                    if precal_operand == 'None' or precal_operand is None or precal_operand == 1:
-                        coeff = 1.
+                    if obj[id_string] in img_ndets[nid]:
+                        img_ndets[nid][obj[id_string]] += 1
+                        if obj['magerr_psf'] < worst_ok_err[nid][obj[id_string]][1]:
+                            # replace the current worst error in the list
+                            img_errs[nid][obj[id_string]][worst_ok_err[nid][obj[id_string]][0]] = obj['magerr_psf']
+                            # now what's the worst?
+                            max_index = np.argmax(img_errs[nid][obj[id_string]])
+                            worst_ok_err[nid][obj[id_string]] = [max_index, img_errs[nid][obj[id_string]][max_index]]
                     else:
-                        coeff = star[precal_operand]
-                    mags_for_cal[d_for_cal] += pre_vector[star[precal_id_string]]*coeff
-                    n_good_e += 1
-                else:
-                    # mags_for_cal[d_for_cal] += pre_median
-                    # if there's no valid precal, then don't accept this!
-                    n_bad_e += 1
+                        img_ndets[nid][obj[id_string]] = 0
+                        img_errs[nid][obj[id_string]] = np.ones(max_dets) #[obj['magerr_psf']]
+                        worst_ok_err[nid][obj[id_string]] = [0,1.0] # index, value
+            
+            if use_precam:
+                ra_match_radius = match_radius/math.cos(go.dec*math.pi/180.)
+                dec_match_radius = match_radius
+                match_area = (go.ra-ra_match_radius, go.dec-dec_match_radius,
+                                go.ra+ra_match_radius, go.dec+dec_match_radius)
+                det_indices = list(precam_map.intersection(match_area))
+                if len(det_indices) == 1:
+                    ndet_for_cal += 1
+                    precam_star = precam_stars[det_indices[0]]
+                    precam_star['for_mean'] = False
+                    go.objects.append(precam_star)
+                    for nid, id_string in enumerate(id_strings):
+                        precam_id = precam_ids[nid]
+                        if nid not in imgids:
+                            imgids[nid] = dict()
+                            worst_ok_err[nid] = dict()
+                        imgids[nid][precam_id] = True
+                        worst_ok_err[nid][precam_id] = [0,1.0] # don't cut any precam objects
+                    precam_count += 1
+
+        if not obj_inarea:
+            return None, None, None, None
+
+        max_nimgs = dict()
+        max_nimgs_total = 0
+        for nid, id_string in enumerate(id_strings):
+            if nid in imgids.keys():
+                max_nimgs[nid] = len(imgids[nid].keys())
+                max_nimgs_total += max_nimgs[nid]
+        img_connectivity = None
+        if require_standards:
+            if len(id_strings) == 1:
+                img_connectivity = np.zeros((max_nimgs[0], max_nimgs[0]), dtype='int')
+    
+        print "Finished first pass through global objects"
+    
+        for nid, id_string in enumerate(id_strings):
+            n_to_clip = 0
+            for i in worst_ok_err[nid].keys():
+                if worst_ok_err[nid][i][1] < 1.:
+                    n_to_clip += 1
+            print "%s: %d regions to calibrate, %d with a clipped number of detections" %(id_string, len(worst_ok_err[nid].keys()), n_to_clip)
+    
+    
+    
+        for go in global_objs_list:
+            
+            if len(go.objects) < 2:
+                continue
+        
+            if go.dec < dec_min or go.dec > dec_max:
+                continue
+            if ra_min > ra_max: # 300 60
+                if go.ra > ra_max and go.ra < ra_min:
+                    continue
+            else:
+                if go.ra < ra_min or go.ra > ra_max:
                     continue
                 
-            for nid, id_string in enumerate(id_strings):
-                if operands[nid] in [ 'None', None, 1 ]:
-                    operands_for_cal[nid][d_for_cal] = 1
-                else:
-                    operands_for_cal[nid][d_for_cal] = star[operands[nid]]
+            # cut out the bad objects for ALL id strings!  (all calibration identifiers)
+            # also only do the decent objects ("for_mean")
+            for nid,id_string in enumerate(id_strings):
+                go_objects = [obj for obj in go.objects if obj['for_mean'] == True and obj[id_string] in worst_ok_err[nid] and obj['magerr_psf'] < worst_ok_err[nid][obj[id_string]][1]]
+        
+            if len(go_objects) < 2:
+                continue
+        
+            ndet = len(go_objects)
+            ra = go.ra
+            dec = go.dec
+            
+            if ndet < 2:
+                continue
+        
+            mags = np.zeros(ndet)
+            mag_errors = np.zeros(ndet)
+            image_ids = dict()
+            image_id_matrix = dict()
+            operands = dict()
+            for nid,id_string in enumerate(id_strings):
+                image_ids[nid] = np.zeros(ndet, dtype=np.int)
+                image_id_matrix[nid] = np.zeros([max_nimgs[nid],ndet], dtype=np.int)
+                operands[nid] = np.zeros(ndet)
+            d = 0
+            for star in go_objects:
+            
+                mags[d] = star['mag_psf']
+                mag_errors[d] = star['magerr_psf']
+                if star[id_strings[0]] != precam_ids[0]: # if not precam
+                    mag_errors[d] = np.sqrt(star['magerr_psf']*star['magerr_psf'] + magerr_sys2)
+            
+                if use_color_terms and not ( use_precam and star['exposureid'] == precam_stars[0]['exposureid'] ):
+                    if star['exposureid'] not in mag_classes:
+                        pwv = color_term_cal.get_pwv(star['mjd'])
+                        mag_classes[star['exposureid']] = color_term_cal.color_term_correction(band,pwv,star['airmass'])
+                    fp_x = star['x_image'] + fp_xs[star['ccd']]
+                    fp_y = star['x_image'] + fp_ys[star['ccd']]
+                    fp_r = np.sqrt(fp_x*fp_x + fp_y*fp_y)/14880.1 # the largest fp_r i saw in an example run
+                    if go.color is None:
+                        go.color = 1.3 # common color.... temporary?
+                    color_term = color_term_cal.fit_color_position(mag_classes[star['exposureid']],go.color,fp_r)
+                    mags[d] += color_term
                 
-                try:
-                    image_ids[nid][d_for_cal] = image_id_dict[nid][star[id_string]]
-                    image_id_matrix[nid][image_ids[nid][d_for_cal],d_for_cal] = 1
-                except KeyError:
-                    # the current image id is not in the image_ids dictionary yet
-                    if nid not in image_id_count:
-                        image_id_count[nid] = 0
+                for p in precal:
+                    [pre_vector, precal_id_string, precal_operand, pre_median, pre_outliers] = p
+                    if star[precal_id_string] in pre_vector:
+                        coeff = None
+                        if precal_operand == 'None' or precal_operand is None or precal_operand == 1:
+                            coeff = 1.
+                        else:
+                            coeff = star[precal_operand]
+                        mags[d] += pre_vector[star[precal_id_string]]*coeff
+                        n_good_e += 1
                     else:
-                        image_id_count[nid] += 1
-
-                    if image_id_count[nid] >= max_nimgs[nid]:
-                        print "WARNING, image_id_count = %d >= max_nimgs = %d" %(image_id_count[nid], max_nimgs[nid])
-
-                    image_id_dict[nid][star[id_string]] = image_id_count[nid] # will need to concatenate these to get the indices for p_vector
-                    image_ids[nid][d_for_cal] = image_id_dict[nid][star[id_string]]
-                    image_id_matrix[nid][image_ids[nid][d_for_cal],d_for_cal] = 1
-            
-            
-            if star['for_mean']:
-                mags_for_summi[d_for_summi] = mags_for_cal[d_for_cal]
-                mag_errors_for_summi[d_for_summi] = mag_errors_for_cal[d_for_cal]
-                d_for_summi += 1
-                
-            d_for_cal += 1
-        
-        
-        if d_for_summi != ndet_for_summi:
-            print "WARNING, d_for_summi = %d, ndet_for_summi = %d" %(d_for_summi, ndet_for_summi)
-        if d_for_cal != ndet_for_cal:
-            print "WARNING, d_for_cal = %d, ndet_for_cal = %d" %(d_for_cal, ndet_for_cal)
-        
-        invsigma_array_for_cal = 1.0/np.square(mag_errors_for_cal)
-        invsigma_array_for_summi = 1.0/np.square(mag_errors_for_summi)
-        sum_invsigma2_for_summi = invsigma_array_for_summi.sum()
-        sum_invsigma2_for_cal = invsigma_array_for_cal.sum()
-        sum_m_i = (mags_for_summi*invsigma_array_for_summi).sum() / sum_invsigma2_for_summi
-        
-        b_vector = np.append( b_vector, mags_for_cal - sum_m_i )
-        
-        a_submatrix = None
-        for nid,id_string in enumerate(id_strings):
-            invsigma_matrix = np.tile(invsigma_array_for_cal*operands_for_cal[nid], (max_nimgs[nid],1))
-            # print "invsigma_matrix shape: {0}".format(invsigma_matrix.shape)
-            sum_for_zps_nid = (image_id_matrix[nid]*invsigma_matrix).sum(axis=1) / sum_invsigma2_for_cal
-            # print "sum_for_zps_nid shape: {0}".format(sum_for_zps_nid.shape)
-            a_submatrix_nid = np.tile(sum_for_zps_nid, (ndet_for_cal,1) )
-            a_submatrix_nid[range(ndet_for_cal),image_ids[nid][range(ndet_for_cal)]] -= operands_for_cal[nid]
-            if a_submatrix is None:
-                a_submatrix = a_submatrix_nid
-            else:
-                a_submatrix = np.hstack((a_submatrix, a_submatrix_nid))
-            
-        # print a_submatrix.shape
-        a_submatrix = coo_matrix(a_submatrix)
-        
-        indices = np.where(a_submatrix.data != 0.)[0]
-        if( matrix_size+len(indices) > max_matrix_size ):
-            a_matrix_xs = np.hstack((a_matrix_xs,np.zeros(max_matrix_size)))
-            a_matrix_ys = np.hstack((a_matrix_ys,np.zeros(max_matrix_size)))
-            a_matrix_vals = np.hstack((a_matrix_vals,np.zeros(max_matrix_size)))
-            max_matrix_size += max_matrix_size
-        
-        a_matrix_xs[matrix_size:(matrix_size+len(indices))] = a_submatrix.col[indices]
-        a_matrix_ys[matrix_size:(matrix_size+len(indices))] = a_submatrix.row[indices]+ndets
-        a_matrix_vals[matrix_size:(matrix_size+len(indices))] = a_submatrix.data[indices]
-        matrix_size += len(indices)
-        
-        c_vector = np.append(c_vector, invsigma_array_for_cal)
-        
-        # add up some stats
-        sum_rms += np.std(mags_for_summi-sum_m_i)
-        n_rms += 1
-        ndets += ndet_for_cal
-        
-        # connectivity matrix
-        # only for one image_id....
-        if require_standards and len(id_strings) == 1:
-            for star in go.objects:
-                for star2 in go.objects:
-                    img_connectivity[image_id_dict[0][star[id_string]], image_id_dict[0][star2[id_string]]] = 1
-                
-    print "%d good previous zps, %d bad" %(n_good_e, n_bad_e)
-    
-    n_components = 1
-    standard_component = None
-    labels = None
-    if require_standards:
-        if len(id_strings) > 1:
-            print "WARNING, not checking disjoing regions because you are using >1 id_string"
-        else:
-            n_components, labels = cs_graph_components(img_connectivity)
-            print "# disjoint regions: %d" %(n_components)
-        
-        id_string = id_strings[0]
-        if n_components > 1:
-            print "Warning, %d disjoint regions in the data!!" %n_components
-            if precam_ids[0] not in image_id_dict[0]:
-                print "No standards in any of the regions!"
-                has_precam = False
-                p_vector = [0]
-                return image_id_dict, p_vector, has_precam
-            standard_component = labels[image_id_dict[0][precam_ids[0]]]
-            labels[labels == -2] = np.max(labels)+1
-            n_w_standards = np.bincount(labels)[standard_component]
-            print "%d of %d images will be calibrated" %(n_w_standards, len(labels))
-    if( ndets == 0 ):
-        # continue
-        return image_id_dict, p_vector, has_precam
-    
-    gcount = len(global_objs_list)
-    print "Looped through %d global objects, %d measurements total, %d from precam" %( gcount, ndets, precam_count )
-    print "Mean RMS of the stars: %e" %(sum_rms/n_rms)
-    
-    print "matrix size = {0}".format(matrix_size)
-    print "ndets = {0}, max_nimgs_total = {1}".format(ndets,max_nimgs_total)
-    print "len a_matrix vectors: {0}".format(len(a_matrix_ys))
-    a_matrix = coo_matrix((a_matrix_vals[0:matrix_size], (a_matrix_ys[0:matrix_size], a_matrix_xs[0:matrix_size])), shape=(ndets,max_nimgs_total))
-
-    c_matrix = lil_matrix((ndets,ndets))
-    c_matrix.setdiag(1.0/c_vector)
-    
-    # print a_matrix
-    # print b_vector
-
-    # print "Calculating intermediate matrices..."
-    subterm = (a_matrix.transpose()).dot(c_matrix)
-    termA = subterm.dot(a_matrix)
-    termB = subterm.dot(b_vector)
-    # print "Solving!"
-    # p_vector = linalg.bicgstab(termA,termB)[0]
-    # p_vector = linalg.spsolve(termA,termB)
-    p_vector = linalg.minres(termA,termB)[0]
-    
-    
-    # normalize to the precam standards
-    if use_precam:
-        p_base = 0
-        for nid, id_string in enumerate(id_strings):
-            # only normalize the additive zero points...  not ideal, but not sure what's better.
-            if operands[nid] not in [ 'None', None, 1 ]:
-                continue
-            # deal with the indices for each id_string separately
-            p_vector_indices = image_id_dict[nid].values()
-            if precam_ids[nid] in image_id_dict[nid]:
-                print "%s: Normalizing to the PreCam standards!" %id_string
-                p_vector[p_vector_indices] -= p_vector[p_base+image_id_dict[nid][precam_id]]
-                has_precam = 1
-            else:
-                median = np.median(p_vector)
-                print "%s: Normalizing to the median of the zeropoints: %e" %(id_string, median)
-                p_vector[p_vector_indices] -= median
-            p_base += max_nimgs[nid]
-    
-    print "Solution:"
-    print p_vector.shape
-    print p_vector
-    
-    if len(id_strings) == 1:
-        if n_components > 1:
-            for p in range(len(p_vector)):
-                if labels[p] != standard_component:
-                    p_vector[p] = np.nan
-    
-    # now calculate how we did
-    sum_rms = 0.
-    n_rms = 0
-    sum_rms_formean = 0.
-    n_rms_formean = 0.
-    n_good_e = 0
-    n_bad_e = 0
-    for go in global_objs_list:
-        
-        if len(go.objects) < 2:
-            continue
-        
-        if go.dec < dec_min or go.dec > dec_max:
-            continue
-        if ra_min > ra_max: # 300 60
-            if go.ra > ra_max and go.ra < ra_min:
-                continue
-        else:
-            if go.ra < ra_min or go.ra > ra_max:
-                continue
-        
-        mags = np.zeros(len(go.objects))
-        mag_errors = np.zeros(len(go.objects))
-        mags_formean = np.zeros(len([obj for obj in go.objects if obj['for_mean']]))
-        mag_errors_formean = np.zeros(len(mags_formean))
-        i=0
-        i2=0
-        bad = dict()
-        for nid,id_string in enumerate(id_strings):
-            bad[nid] = dict()
-        
-        for star in go.objects:
-            
-            mags[i] = star['mag_psf']
-            mag_errors[i] = star['magerr_psf']
-            if star['for_mean']:
-                mags_formean[i2] = star['mag_psf']
-                mag_errors_formean[i2] = star['magerr_psf']
-            
-            try:
-                p_base = 0
-                for nid,id_string in enumerate(id_strings):
-                    if (p_vector[p_base+image_id_dict[nid][star[id_string]]] is None) or np.isnan(p_vector[p_base+image_id_dict[nid][star[id_string]]]):
-                        bad[nid][star[id_string]] = True
-                        p_base += max_nimgs[nid]
+                        # mags_for_cal[d_for_cal] += pre_median
+                        # if there's no valid precal, then don't accept this!
+                        n_bad_e += 1
                         continue
-                    coeff = None
-                    if operands[nid] in [ 'None', None, 1 ]:
-                        coeff = 1.
-                    else:
-                        coeff = star[operands[nid]]
-                    mags[i] += p_vector[p_base+image_id_dict[nid][star[id_string]]]*coeff
-                    if star['for_mean']:
-                        mags_formean[i2] += p_vector[p_base+image_id_dict[nid][star[id_string]]]*coeff
-                    p_base += max_nimgs[nid]
-                    
-            except KeyError:
-                bad[nid][star[id_string]] = True
                 
-            for p in precal:
-                [pre_vector, precal_id_string, precal_operand, pre_median] = p
-                coeff = None
-                if precal_operand in [ 'None', None, 1 ]:
-                    coeff = 1.
-                else:
-                    coeff = star[precal_operand]
-                if star[precal_id_string] in pre_vector:
-                    n_good_e += 1
-                    mags[i] += pre_vector[star[precal_id_string]]*coeff
-                    if star['for_mean']:
-                        mags_formean[i2] += pre_vector[star[precal_id_string]]*coeff
-                else:
-                    n_bad_e += 1
-                    mags[i] += pre_median*coeff
-                    if star['for_mean']:
-                        mags_formean[i2] += pre_median*coeff
-                        
-            if star['for_mean']:
-                i2 += 1
-            i += 1
+                for nid, id_string in enumerate(id_strings):
+                    if operands_in[nid] in [ 'None', None, 1 ]:
+                        operands[nid][d] = 1
+                    else:
+                        operands[nid][d] = star[operands_in[nid]]
+                
+                    try:
+                        image_ids[nid][d] = image_id_dict[nid][star[id_string]]
+                        image_id_matrix[nid][image_ids[nid][d],d] = 1
+                    except KeyError:
+                        # the current image id is not in the image_ids dictionary yet
+                        if nid not in image_id_count:
+                            image_id_count[nid] = 0
+                        else:
+                            image_id_count[nid] += 1
+
+                        if image_id_count[nid] >= max_nimgs[nid]:
+                            print "WARNING, image_id_count = %d >= max_nimgs = %d" %(image_id_count[nid], max_nimgs[nid])
+
+                        image_id_dict[nid][star[id_string]] = image_id_count[nid] # will need to concatenate these to get the indices for p_vector
+                        image_ids[nid][d] = image_id_dict[nid][star[id_string]]
+                        image_id_matrix[nid][image_ids[nid][d],d] = 1
             
-        if i>2:
-            mags = mags[0:i]
-            mag_errors = mag_errors[0:i]
+            
+                d += 1
+                  
             invsigma_array = 1.0/np.square(mag_errors)
             sum_invsigma2 = invsigma_array.sum()
             sum_m_i = (mags*invsigma_array).sum() / sum_invsigma2
+        
+            b_vector = np.append( b_vector, mags - sum_m_i )
+        
+            a_submatrix = None
+            for nid,id_string in enumerate(id_strings):
+                invsigma_matrix = np.tile(invsigma_array*operands[nid], (max_nimgs[nid],1))
+                # print "invsigma_matrix shape: {0}".format(invsigma_matrix.shape)
+                sum_for_zps_nid = (image_id_matrix[nid]*invsigma_matrix).sum(axis=1) / sum_invsigma2
+                # print "sum_for_zps_nid shape: {0}".format(sum_for_zps_nid.shape)
+                a_submatrix_nid = np.tile(sum_for_zps_nid, (ndet,1) )
+                a_submatrix_nid[range(ndet),image_ids[nid][range(ndet)]] -= operands[nid]
+                if a_submatrix is None:
+                    a_submatrix = a_submatrix_nid
+                else:
+                    a_submatrix = np.hstack((a_submatrix, a_submatrix_nid))
+            
+            # print a_submatrix.shape
+            a_submatrix = coo_matrix(a_submatrix)
+        
+            indices = np.where(a_submatrix.data != 0.)[0]
+            if( matrix_size+len(indices) > max_matrix_size ):
+                a_matrix_xs = np.hstack((a_matrix_xs,np.zeros(max_matrix_size)))
+                a_matrix_ys = np.hstack((a_matrix_ys,np.zeros(max_matrix_size)))
+                a_matrix_vals = np.hstack((a_matrix_vals,np.zeros(max_matrix_size)))
+                max_matrix_size += max_matrix_size
+        
+            a_matrix_xs[matrix_size:(matrix_size+len(indices))] = a_submatrix.col[indices]
+            a_matrix_ys[matrix_size:(matrix_size+len(indices))] = a_submatrix.row[indices]+ndets
+            a_matrix_vals[matrix_size:(matrix_size+len(indices))] = a_submatrix.data[indices]
+            matrix_size += len(indices)
+        
+            c_vector = np.append(c_vector, invsigma_array)
+        
+            # add up some stats
             sum_rms += np.std(mags-sum_m_i)
             n_rms += 1
-        if i2>2:
-            mags_formean = mags_formean[0:i2]
-            mag_errors_formean = mag_errors_formean[0:i2]
-            invsigma_array = 1.0/np.square(mag_errors_formean)
-            sum_invsigma2 = invsigma_array.sum()
-            sum_m_i = (mags_formean*invsigma_array).sum() / sum_invsigma2
-            sum_rms_formean += np.std(mags_formean-sum_m_i)
-            n_rms_formean += 1
-            
-    if n_rms == 0:
-        n_rms = 1
-    if n_rms_formean == 0:
-        n_rms_formean = 1
+            ndets += ndet
+        
+            # connectivity matrix
+            # only for one image_id....
+            if require_standards and len(id_strings) == 1:
+                for star in go_objects:
+                    if star[id_string] in image_id_dict[0]:
+                        for star2 in go_objects:
+                            if star2[id_string] in image_id_dict[0]:
+                                img_connectivity[image_id_dict[0][star[id_string]], image_id_dict[0][star2[id_string]]] = 1
+                
+        print "%d good previous zps, %d bad" %(n_good_e, n_bad_e)
     
-    print "Mean RMS after calibration: %e (%e with standards), %d/%d images calibrated" %(sum_rms_formean/n_rms_formean, sum_rms/n_rms, len(p_vector)-len(bad.keys()), len(p_vector))
+        n_components = 1
+        standard_component = None
+        labels = None
+        if require_standards:
+            if len(id_strings) > 1:
+                print "WARNING, not checking disjoing regions because you are using >1 id_string"
+            else:
+                n_components, labels = cs_graph_components(img_connectivity)
+                print "# disjoint regions: %d" %(n_components)
+        
+            id_string = id_strings[0]
+            if n_components > 1:
+                print "Warning, %d disjoint regions in the data!!" %n_components
+                if precam_ids[0] not in image_id_dict[0]:
+                    print "No standards in any of the regions!"
+                    has_precam = False
+                    p_vector = [0]
+                    return image_id_dict, p_vector, has_precam, None
+                standard_component = labels[image_id_dict[0][precam_ids[0]]]
+                labels[labels == -2] = np.max(labels)+1
+                n_w_standards = np.bincount(labels)[standard_component]
+                print "%d of %d images will be calibrated" %(n_w_standards, len(labels))
+        if( ndets == 0 ):
+            # continue
+            return image_id_dict, p_vector, has_precam, None
+    
+        gcount = len(global_objs_list)
+        print "Looped through %d global objects, %d measurements total, %d from precam" %( gcount, ndets, precam_count )
+        print "Mean RMS of the stars: %e" %(sum_rms/n_rms)
+    
+        print "matrix size = {0}".format(matrix_size)
+        print "ndets = {0}, max_nimgs_total = {1}".format(ndets,max_nimgs_total)
+        print "len a_matrix vectors: {0}".format(len(a_matrix_ys))
+        a_matrix = coo_matrix((a_matrix_vals[0:matrix_size], (a_matrix_ys[0:matrix_size], a_matrix_xs[0:matrix_size])), shape=(ndets,max_nimgs_total))
+
+        c_matrix = lil_matrix((ndets,ndets))
+        c_matrix.setdiag(1.0/c_vector)
+    
+        # print a_matrix
+        # print b_vector
+
+        # print "Calculating intermediate matrices..."
+        
+        subterm = (a_matrix.transpose()).dot(c_matrix)
+        termA = subterm.dot(a_matrix)
+        termB = subterm.dot(b_vector)
+        
+        # print "Solving!"
+        # p_vector = linalg.bicgstab(termA,termB)[0]
+        # p_vector = linalg.spsolve(termA,termB)
+        p_vector = linalg.minres(termA,termB)[0]
+        
+        # normalize to the precam standards
+        p_base = 0
+        for nid, id_string in enumerate(id_strings):
+            # only normalize the additive zero points...  not ideal, but not sure what's better.
+            if operands_in[nid] not in [ 'None', None, 1 ]:
+                continue
+            # deal with the indices for each id_string separately
+            p_vector_indices = image_id_dict[nid].values()
+            if use_precam and precam_ids[nid] in image_id_dict[nid]:
+                print "%s: Normalizing to the PreCam standards!" %id_string
+                # replace zeros with nans
+                p_vector[p_vector == 0.0] = np.nan
+                p_vector[p_vector_indices] -= p_vector[p_base+image_id_dict[nid][precam_id]]
+                has_precam = 1
+            else:
+                # median = np.median(p_vector[p_vector_indices])
+                maximum = np.amax(p_vector[p_vector_indices])
+                print "%s: Normalizing to the maximum of the zeropoints: %e" %(id_string, maximum)
+                # replace zeros with nans
+                p_vector[p_vector == 0.0] = np.nan
+                p_vector[p_vector_indices] -= maximum
+            p_base += max_nimgs[nid]
+    
+        if len(id_strings) == 1:
+            if n_components > 1:
+                for p in range(len(p_vector)):
+                    if labels[p] != standard_component:
+                        p_vector[p] = np.nan
+        
+        print "Solution:"
+        print p_vector.shape
+        print p_vector
+        
+        # now calculate how we did
+        sum_rms = 0.
+        n_rms = 0
+        sum_rms_formean = 0.
+        n_rms_formean = 0.
+        n_good_e = 0
+        n_bad_e = 0
+        dmag_by_img = []
+        dmag2_by_img = []
+        n_by_img = []
+        nmeas_flagged = 0
+        nimgs_flagged = 0
+        
+        for nid,id_string in enumerate(id_strings):
+            dmag_by_img.append({})
+            dmag2_by_img.append({})
+            n_by_img.append({})
+            
+        for go in global_objs_list:
+            
+            go_objects = [obj for obj in go.objects if obj[id_string] in worst_ok_err[nid] and obj['magerr_psf'] < worst_ok_err[nid][obj[id_string]][1]]
+            
+            if len(go_objects) < 2:
+                continue
+        
+            if go.dec < dec_min or go.dec > dec_max:
+                continue
+            if ra_min > ra_max: # 300 60
+                if go.ra > ra_max and go.ra < ra_min:
+                    continue
+            else:
+                if go.ra < ra_min or go.ra > ra_max:
+                    continue
+        
+            mags = np.zeros(len(go_objects))
+            mag_errors = np.zeros(len(go_objects))
+            mags_formean = np.zeros(len([obj for obj in go_objects if obj['for_mean']]))
+            mag_errors_formean = np.zeros(len(mags_formean))
+            id_strings_tally = []
+            for nid in range(len(id_strings)):
+                id_strings_tally.append(np.zeros(len(go_objects)))
+            sids = np.zeros(len(go_objects),dtype=int)
+            i=0
+            i2=0
+            bad = dict()
+            for nid,id_string in enumerate(id_strings):
+                bad[nid] = dict()
+        
+            for s,star in enumerate(go_objects):
+            
+                mags[i] = star['mag_psf']
+                mag_errors[i] = star['magerr_psf']
+                sids[i] = s
+                for nid,id_string in enumerate(id_strings):
+                    id_strings_tally[nid][i] = star[id_string]
+                if star['for_mean']:
+                    mags_formean[i2] = star['mag_psf']
+                    mag_errors_formean[i2] = star['magerr_psf']
+            
+                try:
+                    p_base = 0
+                    for nid,id_string in enumerate(id_strings):
+                        if (p_vector[p_base+image_id_dict[nid][star[id_string]]] is None) or np.isnan(p_vector[p_base+image_id_dict[nid][star[id_string]]]):
+                            bad[nid][star[id_string]] = True
+                            p_base += max_nimgs[nid]
+                            continue
+                        coeff = None
+                        if operands_in[nid] in [ 'None', None, 1 ]:
+                            coeff = 1.
+                        else:
+                            coeff = star[operands[nid]]
+                        mags[i] += p_vector[p_base+image_id_dict[nid][star[id_string]]]*coeff
+                        if star['for_mean']:
+                            mags_formean[i2] += p_vector[p_base+image_id_dict[nid][star[id_string]]]*coeff
+                        p_base += max_nimgs[nid]
+                    
+                except KeyError:
+                    bad[nid][star[id_string]] = True
+                
+                for p in precal:
+                    [pre_vector, precal_id_string, precal_operand, pre_median, pre_outliers] = p
+                    coeff = None
+                    if precal_operand in [ 'None', None, 1 ]:
+                        coeff = 1.
+                    else:
+                        coeff = star[precal_operand]
+                    if star[precal_id_string] in pre_vector:
+                        n_good_e += 1
+                        mags[i] += pre_vector[star[precal_id_string]]*coeff
+                        if star['for_mean']:
+                            mags_formean[i2] += pre_vector[star[precal_id_string]]*coeff
+                    else:
+                        n_bad_e += 1
+                        mags[i] += pre_median*coeff
+                        if star['for_mean']:
+                            mags_formean[i2] += pre_median*coeff
+                        
+                if star['for_mean']:
+                    i2 += 1
+            
+                i += 1
+        
+            if i>2:
+                mags = mags[0:i]
+                mag_errors = mag_errors[0:i]
+                invsigma_array = 1.0/np.square(mag_errors)
+                sum_invsigma2 = invsigma_array.sum()
+                sum_m_i = (mags*invsigma_array).sum() / sum_invsigma2
+                sum_rms += np.std(mags-sum_m_i)
+                n_rms += 1
+                if i2>2:
+                    mags_formean = mags_formean[0:i2]
+                    mag_errors_formean = mag_errors_formean[0:i2]
+                    invsigma_array = 1.0/np.square(mag_errors_formean)
+                    sum_invsigma2 = invsigma_array.sum()
+                    sum_m_i = (mags_formean*invsigma_array).sum() / sum_invsigma2
+                    stddev = np.std(mags_formean-sum_m_i)
+                    sum_rms_formean += stddev
+                    n_rms_formean += 1
+            
+                    # if there were enough objects to get a decent mean, look for outliers.
+                    for j in range(i):
+                        if abs(mags[j] - sum_m_i) > 3.0*stddev:
+                            # mark j as an outlier and mark it as bad.
+                            # mark its mag_error as > good_mag_error
+                            go_objects[sids[j]]['magerr_psf'] = 10.0*good_quality_magerr
+                            nmeas_flagged += 1
+                        for nid,id_string in enumerate(id_strings):
+                            if id_strings_tally[nid][j] not in dmag_by_img[nid]:
+                                dmag_by_img[nid][id_strings_tally[nid][j]] = 0.
+                                dmag2_by_img[nid][id_strings_tally[nid][j]] = 0.
+                                n_by_img[nid][id_strings_tally[nid][j]] = 0.
+                            dmag_by_img[nid][id_strings_tally[nid][j]] += mags[j]-sum_m_i
+                            dmag2_by_img[nid][id_strings_tally[nid][j]] += (mags[j]-sum_m_i)**2
+                            n_by_img[nid][id_strings_tally[nid][j]] += 1.0
+                        
+        if n_rms == 0:
+            n_rms = 1
+        if n_rms_formean == 0:
+            n_rms_formean = 1
+    
+        print "Mean RMS after calibration: %e (%e with everything), %d/%d images calibrated" %(sum_rms_formean/n_rms_formean, sum_rms/n_rms, len(p_vector)-len(bad.keys()), len(p_vector))
+    
+        p_base = 0
+        for nid,id_string in enumerate(id_strings):
+            # calculate the mean rms and find outliers.
+            rms_by_img = {}
+            for idval in dmag_by_img[nid].keys():
+                rms_by_img[idval] = np.sqrt(dmag2_by_img[nid][idval]/n_by_img[nid][idval] - (dmag_by_img[nid][idval]/n_by_img[nid][idval])*(dmag_by_img[nid][idval]/n_by_img[nid][idval]))
+            mean_rms = np.mean(rms_by_img.values())
+                
+            # also cut out from the mean images with outlier zps
+            good_zps = []
+            for idval in image_id_dict[nid].keys():
+                if not idval in bad_idvals[nid].keys():
+                    good_zps.append(p_vector[p_base+image_id_dict[nid][idval]])
+            mean_zp = np.mean(good_zps)
+            rms_zp = np.std(good_zps)
+            print 'zp mean {0} rms {1}'.format(mean_zp,rms_zp)
+            for idval in dmag_by_img[nid].keys():
+                # cut at 2 sigma
+                if rms_by_img[idval] > 2.5*mean_rms or abs(p_vector[p_base+image_id_dict[nid][idval]]-mean_zp) > 2.5*rms_zp:
+                    # mark idval as bad
+                    bad_idvals[nid][idval] = True
+                    nimgs_flagged += 1
+            # let's renormalize by the mean of the good zps!
+            p_vector[p_base:p_base+max_nimgs[nid]] -= mean_zp
+            p_base += max_nimgs[nid]
+                    
+        print 'Iteration {0}: {1} measurement outliers, {2} image outliers'.format(iteration,nmeas_flagged,nimgs_flagged)
+        
+    # end loop over iterations!
+    
+    # make a massive "image" of all the calibrated data
+    # loop over uncalibrated outlier images and pairwise calibrate them to the master
+    # normalize the result to the master's zp.
+    # this pairwise business will only work if there is one id_string at a time.
+    p_vector_outlier = None
+    outlier_list = []
+    if len(id_strings) == 1:
+        print 'Pairwise calibrating the outliers'
+            
+        outlier_idvals = {}
+        p_vector_outlier = {}
+        nid = 0
+        id_string = id_strings[0]
+        image_id_count_outlier = 0
+        image_id_dict_outlier = {}
+        
+        a_matrix_xs = {}
+        a_matrix_ys = {}
+        a_matrix_vals = {}
+        b_vector = {}
+        c_vector = {}
+        matrix_size = {}
+        ndets = {} 
+        for go in global_objs_list:
+    
+            if len(go.objects) < 2:
+                continue
+
+            if go.dec < dec_min or go.dec > dec_max:
+                continue
+            if ra_min > ra_max: # 300 60
+                if go.ra > ra_max and go.ra < ra_min:
+                    continue
+            else:
+                if go.ra < ra_min or go.ra > ra_max:
+                    continue
+        
+            # cut out the bad objects for ALL id strings!  (all calibration identifiers)
+            go_objects = [obj for obj in go.objects if (obj[id_string] in worst_ok_err[nid] and obj['magerr_psf'] < worst_ok_err[nid][obj[id_string]][1]) or (obj[id_string] not in worst_ok_err[nid])]
+
+            if len(go_objects) < 2:
+                continue
+
+            ndet = len(go_objects)
+
+            if ndet < 2:
+                continue
+    
+            # are there both good and bad idvals in this object?
+            # calibrated = np.ones(len(go_objects), dtype=np.bool_)
+            # calibrated = [obj[id_string] not in bad_idvals[nid].keys() for obj in go_objects]
+            calibrated = [obj[id_string] in image_id_dict[nid] for obj in go_objects]
+            # print 'calibrated: {0}'.format(calibrated)
+            if True not in calibrated or False not in calibrated:
+                continue
+    
+            # jimmy the measurements so that all the calibrated ones are averaged into one value.            
+        
+            ndet = 2 # for each id val separately
+            ndet_calib = np.sum(calibrated)
+        
+            mags = {} # these are used differently from before, with one per idval
+            mag_errors = {}
+            operands = {}
+            mags_calib = np.zeros(ndet_calib)
+            mag_errors_calib = np.zeros(ndet_calib)
+            dc = 0
+            for s, star in enumerate(go_objects):
+        
+                if calibrated[s]:
+                    mags_calib[dc] = star['mag_psf']
+                    mag_errors_calib[dc] = star['magerr_psf']
+                    if star[id_strings[0]] != precam_ids[0]: # if not precam
+                        mag_errors_calib[dc] = np.sqrt(star['magerr_psf']*star['magerr_psf'] + magerr_sys2)            
+                else:
+                    outlier_idvals[star[id_string]] = True
+                    mags[star[id_string]] = [star['mag_psf']]
+                    mag_errors[star[id_string]] = [star['magerr_psf']]
+                    if star[id_strings[0]] != precam_ids[0]: # if not precam
+                        mag_errors[star[id_string]] = [np.sqrt(star['magerr_psf']*star['magerr_psf'] + magerr_sys2)]
+    
+                if use_color_terms and not ( use_precam and star['exposureid'] == precam_stars[0]['exposureid'] ):
+                    if star['exposureid'] not in mag_classes:
+                        pwv = color_term_cal.get_pwv(star['mjd'])
+                        mag_classes[star['exposureid']] = color_term_cal.color_term_correction(band,pwv,star['airmass'])
+                    fp_x = star['x_image'] + fp_xs[star['ccd']]
+                    fp_y = star['x_image'] + fp_ys[star['ccd']]
+                    fp_r = np.sqrt(fp_x*fp_x + fp_y*fp_y)/14880.1 # the largest fp_r i saw in an example run
+                    if go.color is None:
+                        go.color = 1.3 # common color.... temporary?
+                    color_term = color_term_cal.fit_color_position(mag_classes[star['exposureid']],go.color,fp_r)
+                    if calibrated[s]:
+                        mags_calib[dc] += color_term
+                    else:
+                        mags[star[id_string]][0] += color_term
+        
+                for p in precal:
+                    [pre_vector, precal_id_string, precal_operand, pre_median, pre_outliers] = p
+                    if star[precal_id_string] in pre_vector:
+                        coeff = None
+                        if precal_operand == 'None' or precal_operand is None or precal_operand == 1:
+                            coeff = 1.
+                        else:
+                            coeff = star[precal_operand]
+                        if calibrated[s]:
+                            mags_calib[dc] += pre_vector[star[precal_id_string]]*coeff
+                        else:
+                            mags[star[id_string]][0] += pre_vector[star[precal_id_string]]*coeff
+                        n_good_e += 1
+                    else:
+                        # mags_for_cal[d_for_cal] += pre_median
+                        # if there's no valid precal, then don't accept this!
+                        n_bad_e += 1
+                        continue
+        
+                if not calibrated[s]:
+                    if operands_in[nid] in [ 'None', None, 1 ]:
+                        operands[star[id_string]] = 1
+                    else:
+                        operands[star[id_string]] = star[operands_in[nid]]
+                else:
+                    dc += 1
+    
+            invsigma_array = 1.0/np.square(mag_errors_calib)
+            sum_invsigma2 = invsigma_array.sum()
+            mean_calib = (mags_calib*invsigma_array).sum() / sum_invsigma2
+            error_calib = np.median(mag_errors_calib)
+        
+            # now add the data to the a_matrices, with an a_matrix per idval.
+            nid = 0
+            id_string = id_strings[0]
+            image_ids_outlier = np.array([0,1])
+            image_id_matrix_outlier = np.array([[1,0],[0,1]])
+            a_submatrix = {}
+            for idval in mags.keys():
+            
+                # add the calibrated data to the array
+                mags[idval].append(mean_calib)
+                mag_errors[idval].append(error_calib)
+            
+                invsigma_array = 1.0/np.square(mag_errors[idval])
+                sum_invsigma2 = invsigma_array.sum()
+                sum_m_i = (mags[idval]*invsigma_array).sum() / sum_invsigma2
+
+                invsigma_matrix = np.tile(invsigma_array*operands[idval], (2,1))
+                # print "invsigma_matrix shape: {0}".format(invsigma_matrix.shape)
+                sum_for_zps_nid = (image_id_matrix_outlier*invsigma_matrix).sum(axis=1) / sum_invsigma2
+                # print "sum_for_zps_nid shape: {0}".format(sum_for_zps_nid.shape)
+                a_submatrix[idval] = np.tile(sum_for_zps_nid, (ndet,1) )
+                a_submatrix[idval][range(ndet),image_ids_outlier[range(ndet)]] -= operands[idval]
+                # print a_submatrix.shape
+                a_submatrix[idval] = coo_matrix(a_submatrix[idval])
+            
+                max_matrix_size = 100
+                if idval not in a_matrix_xs:
+                    a_matrix_xs[idval] = np.zeros(max_matrix_size)
+                    a_matrix_ys[idval] = np.zeros(max_matrix_size)
+                    a_matrix_vals[idval] = np.zeros(max_matrix_size)
+                    matrix_size[idval] = 0
+                    ndets[idval] = 0
+                    b_vector[idval] = []
+                    c_vector[idval] = []
+            
+                b_vector[idval] = np.append( b_vector[idval], mags[idval] - sum_m_i )
+            
+                indices = np.where(a_submatrix[idval].data != 0.)[0]
+                if( matrix_size[idval]+len(indices) > len(a_matrix_xs) ):
+                    a_matrix_xs[idval] = np.hstack((a_matrix_xs[idval],np.zeros(max_matrix_size)))
+                    a_matrix_ys[idval] = np.hstack((a_matrix_ys[idval],np.zeros(max_matrix_size)))
+                    a_matrix_vals[idval] = np.hstack((a_matrix_vals[idval],np.zeros(max_matrix_size)))
+
+                a_matrix_xs[idval][matrix_size[idval]:(matrix_size[idval]+len(indices))] = a_submatrix[idval].col[indices]
+                a_matrix_ys[idval][matrix_size[idval]:(matrix_size[idval]+len(indices))] = a_submatrix[idval].row[indices]+ndets[idval]
+                a_matrix_vals[idval][matrix_size[idval]:(matrix_size[idval]+len(indices))] = a_submatrix[idval].data[indices]
+                matrix_size[idval] += len(indices)
+
+                c_vector[idval] = np.append(c_vector[idval], invsigma_array)
+
+                ndets[idval] += ndet
+
+        n_outliers = len(a_matrix_vals.keys())
+        for i, idval in enumerate(a_matrix_vals.keys()):
+            a_matrix_vals[idval] = a_matrix_vals[idval][0:matrix_size[idval]]
+            a_matrix_ys[idval] = a_matrix_ys[idval][0:matrix_size[idval]]
+            a_matrix_xs[idval] = a_matrix_xs[idval][0:matrix_size[idval]]
+            a_matrix = coo_matrix((a_matrix_vals[idval], (a_matrix_ys[idval], a_matrix_xs[idval])), shape=(ndets[idval],2))
+            a_matrix = a_matrix.todense() #so that we can clip out bad values;  this should be small anyway because we're doing it pairwise...
+            c_matrix = np.zeros((ndets[idval],ndets[idval]))
+            c_matrix[range(ndets[idval]), range(ndets[idval])] = 1.0/c_vector[idval]
+
+            # print 'idval {0}'.format(idval)
+            # print 'a_matrix {0}'.format(a_matrix)
+            # print 'b_vector {0}'.format(b_vector[idval])
+
+            # print "Calculating intermediate matrices..."
+            
+            previous_zp = 0.
+            new_zp = 100.
+            iteration = 0
+            while( (abs(new_zp - previous_zp) > abs(0.01*previous_zp)) or (abs(new_zp - previous_zp) > 0.005) ): # stop when zp is stable (rel and abs).  arbitrary convergence criteria.....
+                iteration += 1
+                previous_zp = new_zp
+                
+                subterm = (a_matrix.transpose()).dot(c_matrix)
+                termA = subterm.dot(a_matrix)
+                termB = np.array(subterm.dot(b_vector[idval]))[0]
+                # print "Solving!"
+                # p_vector = linalg.bicgstab(termA,termB)[0]
+                # p_vector = linalg.spsolve(termA,termB)
+                p_vector_outlier[idval] = linalg.minres(termA,termB)[0]
+
+                print 'Outlier {0}/{1} ({2}) iteration {3} solution: {4}'.format(i,n_outliers,idval,iteration, p_vector_outlier[idval])
+                # normalize by the calibrated data, save only the idval's result
+                p_vector_outlier[idval] = p_vector_outlier[idval][0]-p_vector_outlier[idval][1]
+                new_zp = p_vector_outlier[idval]
+                
+                # get the rms from the b_vector (mags - sum_m_i)
+                mean_b = np.mean(abs(b_vector[idval]))
+                # print 'mean abs b_vector: {0}'.format(mean_b)
+                # print 'b_vector:{0}'.format(b_vector[idval])
+                rms = np.std(abs(b_vector[idval]))
+                good_indices = np.where(abs(abs(b_vector[idval])-mean_b) < 2.0*rms)[0]
+                
+                print 'Outlier fit iteration {0}: {1}/{2} good measurements given rms {3}'.format(iteration,len(good_indices),len(b_vector[idval]), rms)
+                if len(good_indices) < 10:
+                    del p_vector_outlier[idval]
+                    print 'Giving up on this idval, no convergence.'
+                    break
+                a_matrix = a_matrix[good_indices,:]
+                c_matrix = c_matrix[good_indices][:,good_indices]
+                b_vector[idval] = b_vector[idval][good_indices]
+        outlier_list.append(outlier_idvals.keys())
+    else:
+        print 'More than one id_string to calibrate simultaneously: can\'t pairwise recalibrate the outliers.'
+        outlier_list = [len(id_strings)*[]]
+        
     
     # split p_vector into the different n_id sections
     p_vectors = []
@@ -697,7 +1022,13 @@ def nebencalibrate_pixel( inputs ):
         p_vectors.append(p_vector[p_base:p_base+max_nimgs[nid]])
         p_base += max_nimgs[nid]
         
-    return image_id_dict, p_vectors, has_precam
+    if p_vector_outlier is not None:
+        # add the outlier zps to the output
+        for idval in p_vector_outlier.keys():
+            image_id_dict[0][idval] = len(p_vectors[0])
+            p_vectors[0] = np.hstack((p_vectors[0],p_vector_outlier[idval]))
+    
+    return image_id_dict, p_vectors, has_precam, outlier_list
 
 
 
@@ -721,9 +1052,11 @@ def nebencalibrate( band, nside, nside_file, id_strings, operands, precam_map, p
     
     p_vectors = []
     image_id_dicts = []
+    outliers = []
     for pix in range(npix):
         p_vectors.append(None)
         image_id_dicts.append(dict())
+        outliers.append(None)
         
     # nebencalibrate the pixels!
     has_precam = dict()
@@ -731,7 +1064,7 @@ def nebencalibrate( band, nside, nside_file, id_strings, operands, precam_map, p
     inputs= []
     for p in range(npix):
         inputs.append( [p, nside, nside_file, band, precal, precam_stars, precam_map, globals_dir, id_strings, operands, max_dets, require_standards, ra_min, ra_max, dec_min, dec_max, use_color_terms, mag_classes] )
-        image_id_dicts[p], p_vectors[p], has_precam[p] = nebencalibrate_pixel(inputs[p])
+        image_id_dicts[p], p_vectors[p], has_precam[p], outliers[p] = nebencalibrate_pixel(inputs[p])
         if require_standards and not has_precam[p] and p_vectors[p] is not None:
             print "No standards found in pixel %d for nside=%d.  Degrading!" %(p,nside)
             return 'degrade'
@@ -739,14 +1072,18 @@ def nebencalibrate( band, nside, nside_file, id_strings, operands, precam_map, p
             pix_wobjs.append(p)
     npix_wobjs = len(pix_wobjs)
     
+    
+    
     # now do another ubercalibration to make sure the pixels are normalized to each other
     # the measurements are now the difference between two zps calculated for the same image, during different pixels' ubercalibrations.
     
     # If there is only one pixel with objects, let's just save the ZPs and be done.
     zeropoints_tot = []
+    outliers_tot = []
     if npix_wobjs == 1:
         for nid,id_string in enumerate(id_strings):
             zeropoints = dict()
+            outliers_nid = []
             imagelist = []
             for pix in range(npix):
                 if image_id_dicts[pix][nid] is not None:
@@ -758,9 +1095,12 @@ def nebencalibrate( band, nside, nside_file, id_strings, operands, precam_map, p
                 pix = pix_wobjs[0]
                 if (imageid in image_id_dicts[pix][nid]) and (p_vectors[pix][nid][image_id_dicts[pix][nid][imageid]] is not None) and (not np.isnan(p_vectors[pix][nid][image_id_dicts[pix][nid][imageid]])):
                     zeropoints[imageid] = p_vectors[pix][nid][image_id_dicts[pix][nid][imageid]]
+                    if imageid in outliers[pix][nid]:
+                        outliers_nid.append(imageid)
             zeropoints_tot.append(zeropoints)
-            
-        return zeropoints_tot
+            outliers_tot.append(outliers_nid)
+        
+        return zeropoints_tot, outliers_tot
     
     
     # do this only for the first of the id_strings (TBD: do it for each?)
@@ -775,6 +1115,35 @@ def nebencalibrate( band, nside, nside_file, id_strings, operands, precam_map, p
     imagelist = list(set(imagelist))
     print "There are %d images in total, from %d pixels." %(len(imagelist), npix_wobjs)
         
+    # # try just taking the mean of the non-outlier zps.
+    # zeropoints = dict()
+    # outliers_nid = []
+    # for imageid in imagelist:
+    #     use_outlier = True
+    #     for pix_id in range(npix_wobjs):
+    #         pix = pix_wobjs[pix_id]
+    #         if not nid in image_id_dicts[pix]:
+    #             continue
+    #         if (imageid in image_id_dicts[pix][nid]) and not (imageid in outliers[pix][nid]):
+    #             use_outlier = False
+    #     if use_outlier:
+    #         outliers_nid.append(imageid)
+    #     zps = []
+    #     for pix_id in range(npix_wobjs):
+    #         pix = pix_wobjs[pix_id]
+    #         if not nid in image_id_dicts[pix]:
+    #             continue
+    #         if (imageid in image_id_dicts[pix][nid]) and (imageid == precam_ids[nid] or p_vectors[pix][nid][image_id_dicts[pix][nid][imageid]] != 0.) and (p_vectors[pix][nid][image_id_dicts[pix][nid][imageid]] is not None) and not np.isnan(p_vectors[pix][nid][image_id_dicts[pix][nid][imageid]]):
+    #             if (not use_outlier) and (imageid in outliers[pix][nid]):
+    #                 continue
+    #             zps.append(p_vectors[pix][nid][image_id_dicts[pix][nid][imageid]])
+    #         if len(zps) == 0:
+    #             continue
+    #         zeropoints[imageid] = np.mean(zps)
+    #     # if there is no p1_vector solution (if all instances of an imagid were outliers) then there is no saved zp.
+    # zeropoints_tot.append(zeropoints)
+    
+    
     # if there was more than one pixel, we need to do the overall ubercal.
     sum_for_zps = np.zeros(npix_wobjs)
     b_vector = []
@@ -790,11 +1159,24 @@ def nebencalibrate( band, nside, nside_file, id_strings, operands, precam_map, p
     pix_id_dict2 = dict()
     nzps_tot = 0
     pix_id_count = -1
+    outliers_nid = []
     
     for imageid in imagelist:
         zps = []
         pix_id_matrix2 = np.zeros([npix_wobjs,npix_wobjs], dtype=np.int)
         pix_ids2 = np.zeros(npix_wobjs, dtype=np.int)
+        
+        # is the image not an outlier in at least one pixel?
+        # if it's an outlier in all pixels than use the outlier value, but flag it.
+        use_outlier = True
+        for pix_id in range(npix_wobjs):
+            pix = pix_wobjs[pix_id]
+            if not nid in image_id_dicts[pix]:
+                continue
+            if (imageid in image_id_dicts[pix][nid]) and not (imageid in outliers[pix][nid]):
+                use_outlier = False
+        if use_outlier:
+            outliers_nid.append(imageid)
         
         nzps = 0
         for pix_id in range(npix_wobjs):
@@ -802,6 +1184,8 @@ def nebencalibrate( band, nside, nside_file, id_strings, operands, precam_map, p
             if not nid in image_id_dicts[pix]:
                 continue
             if (imageid in image_id_dicts[pix][nid]) and (imageid == precam_ids[nid] or p_vectors[pix][nid][image_id_dicts[pix][nid][imageid]] != 0.) and (p_vectors[pix][nid][image_id_dicts[pix][nid][imageid]] is not None) and not np.isnan(p_vectors[pix][nid][image_id_dicts[pix][nid][imageid]]):
+                if (not use_outlier) and (imageid in outliers[pix][nid]):
+                    continue
                 zps.append(p_vectors[pix][nid][image_id_dicts[pix][nid][imageid]])
                 
                 try:
@@ -891,7 +1275,6 @@ def nebencalibrate( band, nside, nside_file, id_strings, operands, precam_map, p
             pix = pix_wobjs[pix_id]
             if imageid in image_id_dicts[pix][nid] and pix_id in pix_id_dict2 and not np.isnan(p_vectors[pix][nid][image_id_dicts[pix][nid][imageid]]):
                 zps.append(p_vectors[pix][nid][image_id_dicts[pix][nid][imageid]]+p1_vector[pix_id_dict2[pix_id]])
-        
         sum_rms += np.std(zps)
         n_rms += 1
         
@@ -930,6 +1313,7 @@ def nebencalibrate( band, nside, nside_file, id_strings, operands, precam_map, p
         if zp_n > 0:
             zp_tot /= zp_n
             zeropoints[imageid] = zp_tot
+        # if there is no p1_vector solution (if all instances of an imagid were outliers) then there is no saved zp.
     zeropoints_tot.append(zeropoints)
     
     # are there more id_strings?
@@ -955,7 +1339,13 @@ def nebencalibrate( band, nside, nside_file, id_strings, operands, precam_map, p
                 zeropoints[imageid] = zp_tot
             zeropoints_tot.append(zeropoints)
     
-    return zeropoints_tot
+    
+    # put the outlier info in the right format
+    outliers_tot.append(outliers_nid)
+    for nid in range(len(id_strings)-1):
+        outliers_tot.append([])
+    
+    return zeropoints_tot, outliers_tot
 
 
 def calibrate_by_filter(config):
@@ -988,7 +1378,7 @@ def calibrate_by_filter(config):
     # calibrate!
     
     # use the zp_phots as a starting point to our calibration
-    precal = [[zp_phots, 'ccd', 1, np.median(zp_phots.values())]]
+    precal = [[zp_phots, 'ccd', 1, np.median(zp_phots.values()), []]]
     
     # initialize the color term structure, which will be filled up as needed during the calibration
     colorterm_class = {}
@@ -1000,11 +1390,11 @@ def calibrate_by_filter(config):
         if calibration['use_standards']:
             standard_stars = precam_stars
             standard_map = precam_map
-        new_zps = None
         success = False
+        results = None
         while not success:
-            new_zps = nebencalibrate( band, calibration['nside'], config['general']['nside_file'], calibration['id_strings'], calibration['operands'], standard_map, standard_stars, precal, config['general']['globals_dir'], require_standards=calibration['require_standards'], max_dets=calibration['max_dets'], ra_min=config['general']['ra_min'], ra_max=config['general']['ra_max'], dec_min=config['general']['dec_min'], dec_max=config['general']['dec_max'], use_color_terms=config['general']['use_color_terms'], mag_classes=colorterm_class )
-            if new_zps == 'degrade':
+            results = nebencalibrate( band, calibration['nside'], config['general']['nside_file'], calibration['id_strings'], calibration['operands'], standard_map, standard_stars, precal, config['general']['globals_dir'], require_standards=calibration['require_standards'], max_dets=calibration['max_dets'], ra_min=config['general']['ra_min'], ra_max=config['general']['ra_max'], dec_min=config['general']['dec_min'], dec_max=config['general']['dec_max'], use_color_terms=config['general']['use_color_terms'], mag_classes=colorterm_class )
+            if results == 'degrade':
                 if calibration['nside'] == 1:
                     calibration['nside'] = 0
                 elif calibration['nside'] == 0:
@@ -1014,7 +1404,8 @@ def calibrate_by_filter(config):
                 print "Now trying nside=%d" %calibration['nside']
             else:
                 success = True
-
+        
+        new_zps, new_outliers = results
         for i in range(len(calibration['id_strings'])):
             outfile = open( calibration['outfilenames'][i], 'w' )
             for zp_id in new_zps[i].keys():
@@ -1023,7 +1414,7 @@ def calibrate_by_filter(config):
         
         # so that we use these as input to the following calibration(s)
         for i in range(len(calibration['id_strings'])):
-            precal.append([new_zps[i], calibration['id_strings'][i], calibration['operands'][i], np.median(new_zps[i].values())])
+            precal.append([new_zps[i], calibration['id_strings'][i], calibration['operands'][i], np.median(new_zps[i].values()), new_outliers[i]])
         
 
 def main():
