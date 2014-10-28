@@ -20,6 +20,7 @@ import healpy
 src_dir = '/Users/bauer/software/python'
 sys.path.append(src_dir)
 from pyspherematch import spherematch
+from nebencal_utils import global_object
 
 """
 ubercal.py
@@ -31,12 +32,6 @@ Solve the equation, save the ZPs back into the database.
 For now, make one ZP per image.  Can be generalized to solve for spatial dependence, non-linearity.
 """
 
-
-class global_object:
-    def __init__(self):
-        self.ra = None
-        self.dec = None
-        self.objects = []
 
 # for now.....
 def good_quality(star):
@@ -195,7 +190,7 @@ def make_gos(filename, nside, band):
 
 
 def main():
-    filters = ['g','r','i','z']
+    filters = ['g','z','y']
     nside = 32 # 2: 30 degrees per side, 4: 15 degrees per side, 8:  7.3 degrees per side
     
     print "Making global objects from DES, filters {0}!".format(filters)

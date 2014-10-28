@@ -1,3 +1,4 @@
+import sys
 from tables import *
 
 class FinalCutObj(IsDescription):
@@ -5,7 +6,7 @@ class FinalCutObj(IsDescription):
     imageid = Int64Col()
     object_id = Int64Col()
     zeropoint = Float32Col()
-    zeropointid = Int64Col()
+    flags = Int64Col()
     x_image = Float32Col()
     y_image = Float32Col()
     ra = FloatCol()
@@ -34,7 +35,7 @@ class FinalCutObj(IsDescription):
     cloud_nomad = Float32Col()
 
 def assign_obj(object, entries):
-    object['exposureid'] = int(entries[36]) # int(entries[0])
+    object['exposureid'] = int(entries[0]) # int(entries[36])
     object['imageid'] = int(entries[1])
     object['object_id'] = int(entries[2])
     object['x_image'] = float(entries[3])
@@ -44,9 +45,9 @@ def assign_obj(object, entries):
     object['mag_psf'] = float(entries[7])
     object['magerr_psf'] = float(entries[8])
     object['zeropoint'] = float(entries[9])
-    object['zeropointid'] = int(entries[10])
     object['fwhm_arcsec'] = float(entries[11])
     object['spread_model'] = float(entries[12])
+    object['flags'] = int(entries[13])
     object['band'] = entries[18]
     object['ccd'] = int(entries[19])
     object['airmass'] = float(entries[20])
@@ -78,11 +79,11 @@ def assign_obj(object, entries):
     else:
         object['lskyhot'] = 0.0
 
-infilename = "/Users/bauer/surveys/DES/y1p1/equatorial/output_file.txt"
+infilename = sys.argv[1]
 
 
 h5filename = "finalcutout.h5"
-h5file = openFile(h5filename, mode = "w", title = "Y1P1 EQU")
+h5file = openFile(h5filename, mode = "w", title = "Y1A1 EQU")
 group = h5file.createGroup("/", 'data', 'Data')
 table_u = h5file.createTable(group, 'table_u', FinalCutObj, "u band")
 table_g = h5file.createTable(group, 'table_g', FinalCutObj, "g band")

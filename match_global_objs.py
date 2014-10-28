@@ -89,20 +89,20 @@ def main():
     all_bands.append(primary_band)
     all_bands.append(secondary_band)
     zp_list = {}
+    zp_phots = {}
     for band in all_bands:
         if band in zp_list.keys():
             continue
         zp_list[band] = []
-        zp_phots = dict()
+        zp_phots[band] = dict()
         zp_phot_file = open( config['general']['zp_phot_filenames'][band], 'r' )
-        zp_phots['id_string'] = 'ccd'
-        zp_phots['operand'] = 1
+        zp_phots[band]['id_string'] = 'ccd'
+        zp_phots[band]['operand'] = 1
         for line in zp_phot_file:
             entries = line.split()
             if entries[0][0] == '#':
                 continue
-            zp_phots[int(entries[0])] = -1.0*float(entries[4])
-        zp_list[band].append(zp_phots)
+            zp_phots[band][int(entries[0])] = -1.0*float(entries[4])
         print "Read in {0} ccd offsets (zp_phots) for band {1}".format(len(zp_phots.keys())-2, band)
     
         # NOTE: assumes that the id_string is an integer!
@@ -117,9 +117,22 @@ def main():
                     entries = line.split()
                     if entries[0][0] == '#':
                         continue
-                    zp_dict[int(entries[0])] = float(entries[1])
+                    zp_dict[int(entries[0])] = {'zp': float(entries[1]), 'label': int(entries[2])}
                 zp_list[band].append(zp_dict)
                 print "Read in {0} zeropoints from {1} for id_string {2}, operand {3}".format(len(zp_dict.keys())-2, zp_filename, calibration['id_strings'][i], calibration['operands'][i])
+        
+        # add the standard zp if necessary
+        std_zp_dict = None
+        if config['general']['use_standards']:
+            std_zp_dict = dict()
+            std_zp_dict['operand'] = None
+            std_zp_dict['id_string'] = None
+            zp_file = open(config['general']['stdzp_outfilename'][band], 'r')
+            for line in zp_file:
+                entries = line.split()
+                std_zp_dict[int(entries[0])] = float(entries[1])
+            print 'Read in the zeropoint to standards'
+    
     
     # read in the CCD positions in the focal plane
     posfile = open("/Users/bauer/surveys/DES/ccdPos-v2.par", 'r')
@@ -202,16 +215,35 @@ def main():
                     for d in range(ndet):
                         mag_after = go.objects[d]['mag_psf']
                         badmag = False
+                        ccd = go.objects[d]['ccd']
+                        if ccd in zp_phots[band]:
+                            mag_after += zp_phots[band][ccd]
+                        else:
+                            badmag = True
                         for zps in zp_list[band]:
                             # print 'trying zps {0} {1} {2} {3}'.format(zps['id_string'],zps['operand'], go.objects[d][zps['id_string']], go.objects[d][zps['id_string']] in zps)
                             operand = 1
                             if zps['operand'] not in [1,None,'None']:
                                 operand = go.objects[d][zps['operand']]
-                            id_string = go.objects[d][zps['id_string']]
-                            if id_string in zps:
-                                mag_after += operand*zps[id_string]
+                            if zps['id_string'] == 'None':
+                                mag_after += operand*zps[0]
                             else:
+                                id_string = go.objects[d][zps['id_string']]
+                                if id_string in zps:
+                                    mag_after += operand*zps[id_string]['zp']
+                                else:
+                                    badmag = True
+                        if badmag:
+                            continue
+                        if config['general']['use_standards']:
+                            # make sure the standard zp exists for this label (as defined for the first calibration)
+                            zps = zp_list[band][0]
+                            id_string = go.objects[d][zps['id_string']]
+                            label = zps[id_string]['label']
+                            if label not in std_zp_dict:
                                 badmag = True
+                            else:
+                                mag_after += std_zp_dict[label]
                         if badmag:
                             continue
                         mags.append(mag_after)

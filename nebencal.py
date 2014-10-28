@@ -4,7 +4,6 @@ import math
 import re
 import copy
 from operator import itemgetter
-import cPickle
 import numpy as np
 from scipy.sparse import vstack as sparsevstack
 from scipy.sparse import linalg
@@ -19,7 +18,9 @@ import healpy
 import yaml
 from nebencal_utils import read_precam
 from nebencal_utils import read_sdss
+from nebencal_utils import read_tertiaries
 from nebencal_utils import global_object
+from nebencal_utils import read_global_objs
 colorterm_dir = '/Users/bauer/software/python/des/des_calib/ting/color-term'
 sys.path.append(colorterm_dir)
 import color_term_cal
@@ -59,122 +60,298 @@ def unmatched(star):
     if star['matched']:
         return False
     return True
+    
+def match_radius():
+    return 1.0/3600.
 
-def read_global_objs(band, globals_dir, nside, nside_file, pix):
+
+def tie_idvals(a_matrix, b_vector, c_vector, mag_vector):
     
-    global_objs_list = []
+    print 'Tying id_vals together to regularize the solution'
     
-    # if the pixelization resolution is the same as the file convention, then this is easy.
-    if nside == nside_file:
-        filename = 'gobjs_' + str(band) + '_nside' + str(nside) + '_p' + str(pix)
-        # if there's no data for this pixel, forget it: nothing to calibrate.
-        if not os.path.isfile(os.path.join(globals_dir,filename)):
-            return None
-        # print >> sys.stderr, "Reading in file-resolution pixel %d" %pix
-        file = open(os.path.join(globals_dir,filename), 'rb')
-        global_objs_list = cPickle.load(file)
-        file.close()
-        
-        # if there weren't any objects for this low-res pixel, then we're done.
-        if len(global_objs_list) == 0:
-            return None
-        
-        # now include the 4 nearest neighboring pixels.
-        all_neighbors = healpy.pixelfunc.get_all_neighbours(nside, pix)
-        for pixn in range(0,8,2):
-            filename = 'gobjs_' + str(band) + '_nside' + str(nside) + '_p' + str(all_neighbors[pixn])
-            if os.path.isfile(filename):
-                # print >> sys.stderr, "Reading in file-resolution pixel %d" %all_neighbors[pixn]
-                file = open(os.path.join(globals_dir,filename), 'rb')
-                global_objs_list.extend(cPickle.load(file))
-                file.close()
-    
-    elif nside > nside_file:
-        print "ERROR: Need to have global objects saved in a pixelization that is not lower-resolution than what you're using"
-        throw
-    
-    elif nside == 0:
-        # just read in everything!!
-        npix_file = 12*nside_file*nside_file
-        for pix in range(npix_file):
-            filename = 'gobjs_' + str(band) + '_nside' + str(nside_file) + '_p' + str(pix)
-            if os.path.isfile(os.path.join(globals_dir,filename)):
-                # print >> sys.stderr, "Reading in file-resolution pixel %d" %pix
-                file = open(os.path.join(globals_dir,filename), 'rb')
-                global_objs_list.extend(cPickle.load(file))
-                file.close()
-        if len(global_objs_list) == 0:
-            print "ERROR: no global objects found for filter %s, file nside %d" %(band, nside_file)
-            throw;
-        pix = 0
-        
-    else:
-        # what nside_file pixels correspond to our central and neighbor pixels?
-        # this snazzy trick is from the healpy source code.  works for the nest scheme only.
-        npix_lowres = 12*nside*nside
-        npix_file = 12*nside_file*nside_file
-        rat2 = npix_file/npix_lowres
-        map_file = np.arange(npix_file)
-        map_lowres = map_file.reshape(npix_lowres,rat2)
-        
-        # so what is our pixel in nest scheme, low resolution?
-        pix_lowres_nest = healpy.pixelfunc.ring2nest(nside,pix)
-        # this is made up of the following pixels.  this is the snazzy trick.
-        pixels_nest = map_lowres[pix_lowres_nest,:]
-        # convert back to ring
-        pixels_ring = healpy.pixelfunc.nest2ring(nside_file,pixels_nest)
-        # and read them from the file.
-        for pixel_ring in pixels_ring:
-            filename = 'gobjs_' + str(band) + '_nside' + str(nside_file) + '_p' + str(pixel_ring)
-            # if there's no data for this pixel, forget it: nothing to calibrate.
-            if os.path.isfile(os.path.join(globals_dir,filename)):
-                # print >> sys.stderr, "Reading in file-resolution pixel %d" %pixel_ring
-                file = open(os.path.join(globals_dir,filename), 'rb')
-                global_objs_list.extend(cPickle.load(file))
-                file.close()
-        # if there weren't any objects for this low-res pixel, then we're done.
-        if len(global_objs_list) == 0:
-            return None
+    # sort the mag_vector (keep indices)
+    # for each mag, use it and its forward neighbor if:
+    # - they are not connected directly
+    # - we do not have this connection already in our linking sample
+    linked = {}
+    indices = np.argsort(mag_vector)
+    i1=0
+    i2=1
+    n_target = 0.05*len(b_vector) # add 5% to the problem
+    n_added = 0
+    while i2<len(indices)-1:
+        index1 = indices[i1]
+        index2 = indices[i2]
+        nonzero1 = (a_matrix.getrow(index1).toarray()!=0)[0]
+        nonzero2 = (a_matrix.getrow(index2).toarray()!=0)[0]
+        if np.sum(nonzero1 & nonzero2) == 0: # they are not connected by anything in p_vector
+            first_nonzero1 = np.nonzero(nonzero1)[0][0]
+            first_nonzero2 = np.nonzero(nonzero2)[0][0]
             
-        # now include the four nearest neighbors
-        all_neighbors = healpy.pixelfunc.get_all_neighbours(nside, pix_lowres_nest, nest=True)
-        for pixn in range(0,8,2):
-            # what are these in the high res pixels?
-            pixels_nest = map_lowres[all_neighbors[pixn],:]
-            pixels_ring = healpy.pixelfunc.nest2ring(nside_file,pixels_nest)
-            for pixel_ring in pixels_ring:
-                filename = 'gobjs_' + str(band) + '_nside' + str(nside_file) + '_p' + str(pixel_ring)
-                # if there's no data for this pixel, forget it: nothing to calibrate.
-                if os.path.isfile(os.path.join(globals_dir,filename)):
-                    # print >> sys.stderr, "Reading in file-resolution pixel %d" %pixel_ring
-                    file = open(os.path.join(globals_dir,filename), 'rb')
-                    global_objs_list.extend(cPickle.load(file))
-                    file.close()
+            # if we already have linked these zps (just the first one in the idval list), continue.
+            already = False
+            if (first_nonzero1 in linked.keys()) and (first_nonzero2 in linked[first_nonzero1]):
+                already = True
+            if (first_nonzero2 in linked.keys()) and (first_nonzero1 in linked[first_nonzero2]):
+                already = True
+            
+            if not already:
+                # add this to our linked dictionary for bookkeeping
+                if not first_nonzero1 in linked:
+                    linked[first_nonzero1] = []
+                linked[first_nonzero1].append(first_nonzero2)
+                if not first_nonzero2 in linked:
+                    linked[first_nonzero2] = []
+                linked[first_nonzero2].append(first_nonzero1)
+            
+                # add two entries to b_vector, with normal individual A and c but their mean in b
+                # stop after i get X% of the original vector length.  5%?
+                mean_mag = 0.5*(mag_vector[index1] + mag_vector[index2])
+                b_vector = np.hstack((b_vector, [mag_vector[index1]-mean_mag, mag_vector[index2]-mean_mag]))
+                c_vector = np.hstack((c_vector, [0.02, 0.02])) # arbitrary, same as systematic error added elsewhere
+            
+                a_matrix = sparsevstack([a_matrix, a_matrix.getrow(index1)])
+                a_matrix = sparsevstack([a_matrix, a_matrix.getrow(index2)])
+            
+                n_added += 2
+            
+                if n_added >= n_target:
+                    print 'tie_idvals: Added {0}/{1} objects to tie together different regions'.format(n_added/2, len(b_vector)/2)
+                    break
+        i2 += 1
+        if (mag_vector[indices[i2]]-mag_vector[index1] > 0.005) or (i2 >= len(indices)-1): # arbitrary but close to relative calibration floor
+            i1 += 1
+            i2 = i1+1
     
-    print 'read_global_objs: Returning {0} objects for pixel {1}'.format(len(global_objs_list),pix)
-    return global_objs_list
+    if n_added < n_target:
+        print 'tie_idvals: Warning, only found {0}/{1} similar objects to tie together the field'.format(n_added/2, len(b_vector)/2)
+            
+    return (a_matrix, b_vector, c_vector)
 
-   
+
+def std_ubercal( band, precal, config_general ):
+    # can put in a dependence (RA and Dec?) but for now, just do a ZP.
+    # do this all at once;  assuming we don't have so many standards we'll overload the memory
+    
+    print 'Starting calibration to standards'
+    
+    # read in the standard catalog
+    # read in any catalogs we would like to treat as standards (i.e. precam, sdss...)
+    std_stars = []
+    std_map = index.Index()
+    if config_general['use_precam']:
+        read_precam( std_stars, std_map, config_general['precam_filename'], band )
+    if config_general['use_sdss']:
+        read_sdss( std_stars, std_map, config_general['sdss_filename'], band )
+    if config_general['use_betoule']:
+        read_betoule( std_stars, std_map, config_general['betoule_filename'], band )
+    if config_general['use_tertiaries']:
+        read_tertiaries( std_stars, std_map, config_general['tertiary_filename'], band )
+    print 'Read in {0} standard stars'.format(len(std_stars))
+    
+    
+    # let's figure out how many different labels we have
+    # use precal[1] (the first calibration post-zp_phot) lables
+    # each label number corresponds to a disjoint region in the data
+    pre_labels = precal[1][5]
+    unique_labels = np.unique(pre_labels.values())
+    unique_labels = unique_labels[(unique_labels != 999)]
+    n_labels = len(unique_labels)
+    
+    max_matrix_size = 1000
+    a_matrix_xs = {}
+    a_matrix_ys = {}
+    a_matrix_vals = {}
+    for nl in range(n_labels):
+        a_matrix_xs[nl] = np.zeros(max_matrix_size)
+        a_matrix_ys[nl] = np.zeros(max_matrix_size)
+        a_matrix_vals[nl] = np.zeros(max_matrix_size)
+    matrix_size = np.zeros(n_labels, dtype='int')
+    ndets = np.zeros(n_labels,dtype='int')
+    b_vector = []
+    c_vector = []
+    for nl in range(n_labels):
+        b_vector.append([])
+        c_vector.append([])
+    
+    # read in the objs and match to the standards, one pixel at a time.
+    npix = 1
+    if config_general['nside_file']>0:
+        npix = healpy.nside2npix(config_general['nside_file'])
+    
+    for pix in range(npix):
+        
+        global_objs_list = read_global_objs(band, config_general['globals_dir'], config_general['nside_file'], config_general['nside_file'], pix)
+        if global_objs_list is None:
+            continue
+        
+        for go in global_objs_list:
+        
+            if go.dec < config_general['dec_min'] or go.dec > config_general['dec_max']:
+                continue
+            if config_general['ra_min'] > config_general['ra_max']: # 300 60
+                if go.ra > config_general['ra_max'] and go.ra < config_general['ra_min']:
+                    continue
+            else:
+                if go.ra < config_general['ra_min'] or go.ra > config_general['ra_max']:
+                    continue
+        
+            # cut out objects that are bad quality!
+            go.objects = filter(ok_quality, go.objects)
+            if len(go.objects) == 0:
+                continue
+            
+            # match to standards
+            ra_match_radius = match_radius()/math.cos(go.dec*math.pi/180.)
+            dec_match_radius = match_radius()
+            match_area = (go.ra-ra_match_radius, go.dec-dec_match_radius,
+                            go.ra+ra_match_radius, go.dec+dec_match_radius)
+            det_indices = list(std_map.intersection(match_area))
+            if len(det_indices) == 1:
+                std_star = std_stars[det_indices[0]]
+            
+                # calibrate the matches and average to get one best mag per obj
+                # do one ubercal per label in the FIRST non-zp_phot calibration (precal[1])
+                calib_mags = []
+                label = None
+                for star in go.objects:
+                    mag = star['mag_psf']
+                    good = True
+                    for p in precal:
+                        [pre_vector, precal_id_string, precal_operand, pre_median, pre_outliers, pre_labels] = p
+                        coeff = None
+                        if precal_operand in [ 'None', None, 1 ]:
+                            coeff = 1.
+                        else:
+                            coeff = star[precal_operand]
+                        if star[precal_id_string] in pre_vector:
+                            mag += pre_vector[star[precal_id_string]]*coeff
+                        else:
+                            good = False
+                    if good:
+                        calib_mags.append(mag)
+                        label0 = precal[1][5][star[precal[1][1]]]
+                        if label0 != 999:
+                            label = label0
+                    
+                if len(calib_mags) == 0:
+                    continue
+            
+                if label is None:
+                    print 'WARNING, std calibration finds no good label, skipping object.'
+                    continue
+            
+                # add the matches to the matrices
+                ndet = 2
+                image_ids = np.array([0,1])
+                image_id_matrix = np.array([[1,0],[0,1]])
+                a_submatrix = {}
+            
+                mags = np.array([np.mean(calib_mags), std_star['mag_psf']])
+                mag_errors = np.array([0.02, 0.02]) # arbitrary...
+            
+                invsigma_array = 1.0/np.square(mag_errors)
+                sum_invsigma2 = invsigma_array.sum()
+                sum_m_i = (mags*invsigma_array).sum() / sum_invsigma2
+            
+                invsigma_matrix = np.tile(invsigma_array, (2,1))
+                sum_for_zps_nid = (image_id_matrix*invsigma_matrix).sum(axis=1) / sum_invsigma2
+                a_submatrix = np.tile(sum_for_zps_nid, (ndet,1) )
+                a_submatrix[range(ndet),image_ids[range(ndet)]] -= 1.0
+                a_submatrix = coo_matrix(a_submatrix)
+            
+                b_vector[label] = np.append( b_vector[label], mags - sum_m_i )
+            
+                indices = np.where(a_submatrix.data != 0.)[0]
+                if( matrix_size[label]+len(indices) > len(a_matrix_xs[label]) ):
+                    a_matrix_xs[label] = np.hstack((a_matrix_xs[label],np.zeros(max_matrix_size)))
+                    a_matrix_ys[label] = np.hstack((a_matrix_ys[label],np.zeros(max_matrix_size)))
+                    a_matrix_vals[label] = np.hstack((a_matrix_vals[label],np.zeros(max_matrix_size)))
+                    max_matrix_size += max_matrix_size
+                
+                a_matrix_xs[label][matrix_size[label]:(matrix_size[label]+len(indices))] = a_submatrix.col[indices]
+                a_matrix_ys[label][matrix_size[label]:(matrix_size[label]+len(indices))] = a_submatrix.row[indices]+ndets[label]
+                a_matrix_vals[label][matrix_size[label]:(matrix_size[label]+len(indices))] = a_submatrix.data[indices]
+                matrix_size[label] += len(indices)
+            
+                c_vector[label] = np.append(c_vector[label], invsigma_array)
+            
+                ndets[label] += ndet
+                
+        # end loop over pixels
+    
+    print 'Read in data from all pixels'
+    
+    if np.sum(ndets) == 0:
+        print 'WARNING: No standards match the sample!!'
+        return {0:0.0}
+    else:
+        print '{0} objects matched to the standards'.format(ndets/2)
+    
+    for label in a_matrix_xs.keys():
+        a_matrix_xs[label] = a_matrix_xs[label][0:ndets[label]]
+        a_matrix_ys[label] = a_matrix_ys[label][0:ndets[label]]
+        a_matrix_vals[label] = a_matrix_vals[label][0:ndets[label]]
+    
+    # Now do the solution for each label (disjoint area)
+    result = {}
+    for label in range(n_labels):
+        
+        if ndets[label] == 0:
+            continue
+        
+        b_vector0 = np.array(b_vector[label])
+        a_matrix = coo_matrix((a_matrix_vals[label], (a_matrix_ys[label], a_matrix_xs[label])), shape=(ndets[label],2))
+        a_matrix = a_matrix.todense() #so that we can clip out bad values;  this should be small anyway, if we don't have a gazillion standards?
+        c_matrix = np.zeros((ndets[label],ndets[label]))
+        c_matrix[range(ndets[label]), range(ndets[label])] = 1.0/c_vector[label]
+    
+        previous_zp = 0.
+        new_zp = 100.
+        iteration = 0
+        while( (abs(new_zp - previous_zp) > abs(0.01*previous_zp)) or (abs(new_zp - previous_zp) > 0.005) ): # stop when zp is stable (rel and abs).  arbitrary convergence criteria.....
+            iteration += 1
+            previous_zp = new_zp
+        
+            subterm = (a_matrix.transpose()).dot(c_matrix)
+            termA = subterm.dot(a_matrix)
+            termB = np.array(subterm.dot(b_vector0))[0]
+            # print "Solving!"
+            # p_vector = linalg.bicgstab(termA,termB)[0]
+            # p_vector = linalg.spsolve(termA,termB)
+            p_vector = linalg.minres(termA,termB)[0]
+        
+            print 'Standard calibration iteration {0} solution: {1}'.format(iteration, p_vector)
+            # normalize by the calibrated data, save only the idval's result
+            p_vector = p_vector[0]-p_vector[1]
+            new_zp = p_vector
+        
+            # get the rms from the b_vector (mags - sum_m_i)
+            mean_b = np.mean(abs(b_vector0))
+            # print 'mean abs b_vector: {0}'.format(mean_b)
+            # print 'b_vector:{0}'.format(b_vector)
+            rms = np.std(abs(b_vector0))
+            good_indices = np.where(abs(abs(b_vector0)-mean_b) < 2.0*rms)[0]
+        
+            print 'Standard calibration iteration {0}: {1}/{2} good measurements given rms {3}'.format(iteration,len(good_indices),len(b_vector0), rms)
+            if len(good_indices) < 2:
+                print 'Giving up on this calibration, no convergence.'
+                break
+            a_matrix = a_matrix[good_indices,:]
+            c_matrix = c_matrix[good_indices][:,good_indices]
+            b_vector0 = b_vector0[good_indices]
+        
+        result[label] = p_vector
+    
+    return result
+    
+
 def nebencalibrate_pixel( inputs ):
     
-    [pix, nside, nside_file, band, precal, precam_stars, precam_map, globals_dir, id_strings, operands_in, max_dets, require_standards, ra_min, ra_max, dec_min, dec_max, use_color_terms, mag_classes] = inputs
-    
-    use_precam = 0
-    if len(precam_stars) > 0:
-        use_precam = 1
+    [pix, nside, nside_file, band, precal, globals_dir, id_strings, operands_in, max_dets, ra_min, ra_max, dec_min, dec_max, use_color_terms, mag_classes] = inputs
         
     max_nepochs = 5 # ick!  just a starting point, though.
     magerr_sys2 = 0.0004
-    
-    precam_ids = dict()
-    for nid, id_string in enumerate(id_strings):
-        if len(precam_stars) > 0:
-            precam_ids[nid] = precam_stars[0][id_string]
-        else:
-            precam_ids[nid] = None
-    
-    
-    match_radius = 1.0/3600.
     
     n_iters = 3 
     
@@ -221,12 +398,14 @@ def nebencalibrate_pixel( inputs ):
     
     nimgs_flagged = 1
     iteration = 0
+    image_id_dict = None
     while( nimgs_flagged != 0 ):
         iteration += 1
 #    for iteration in range(n_iters):
     
         ndets = 0
         b_vector = []
+        mag_vector = []
         a_matrix = None
         c_vector = []
         gcount = 0
@@ -235,14 +414,11 @@ def nebencalibrate_pixel( inputs ):
         matrix_size = 0
         n_good_e = 0
         n_bad_e = 0
-    
-        precam_count = 0
-    
+        
         image_id_count = dict()
     
         stars = []
         star_map = index.Index()
-        has_precam = 0
         p_vector = None
     
         imgids = dict()
@@ -277,16 +453,16 @@ def nebencalibrate_pixel( inputs ):
                 if go.ra < ra_min or go.ra > ra_max:
                     continue
         
+            obj_inarea = True
+        
             # cut out objects that are bad quality!
             go.objects = filter(ok_quality, go.objects)
             if len(go.objects) < 2:
                 continue
         
-            obj_inarea = True
-        
             for obj in go.objects:
             
-                # if bad quality (or precam), don't use for calibration
+                # if bad quality, don't use for calibration
                 # (don't use at all!)
                 ok_idval = True
                 for nid, id_string in enumerate(id_strings):
@@ -323,39 +499,25 @@ def nebencalibrate_pixel( inputs ):
                         img_errs[nid][obj[id_string]] = np.ones(max_dets) #[obj['magerr_psf']]
                         worst_ok_err[nid][obj[id_string]] = [0,1.0] # index, value
             
-            if use_precam:
-                ra_match_radius = match_radius/math.cos(go.dec*math.pi/180.)
-                dec_match_radius = match_radius
-                match_area = (go.ra-ra_match_radius, go.dec-dec_match_radius,
-                                go.ra+ra_match_radius, go.dec+dec_match_radius)
-                det_indices = list(precam_map.intersection(match_area))
-                if len(det_indices) == 1:
-                    ndet_for_cal += 1
-                    precam_star = precam_stars[det_indices[0]]
-                    precam_star['for_mean'] = False
-                    go.objects.append(precam_star)
-                    for nid, id_string in enumerate(id_strings):
-                        precam_id = precam_ids[nid]
-                        if nid not in imgids:
-                            imgids[nid] = dict()
-                            worst_ok_err[nid] = dict()
-                        imgids[nid][precam_id] = True
-                        worst_ok_err[nid][precam_id] = [0,1.0] # don't cut any precam objects
-                    precam_count += 1
 
         if not obj_inarea:
             return None, None, None, None
-
+            
         max_nimgs = dict()
         max_nimgs_total = 0
+        skip = False
         for nid, id_string in enumerate(id_strings):
             if nid in imgids.keys():
                 max_nimgs[nid] = len(imgids[nid].keys())
                 max_nimgs_total += max_nimgs[nid]
+            else:
+                print 'WARNING, calibration string {0} has no acceptable data'
+                skip = True
+        if skip:
+            continue
         img_connectivity = None
-        if require_standards:
-            if len(id_strings) == 1:
-                img_connectivity = np.zeros((max_nimgs[0], max_nimgs[0]), dtype='int')
+        if len(id_strings) == 1:
+            img_connectivity = np.zeros((max_nimgs[0], max_nimgs[0]), dtype='int')
     
         print "Finished first pass through global objects"
     
@@ -410,11 +572,9 @@ def nebencalibrate_pixel( inputs ):
             for star in go_objects:
             
                 mags[d] = star['mag_psf']
-                mag_errors[d] = star['magerr_psf']
-                if star[id_strings[0]] != precam_ids[0]: # if not precam
-                    mag_errors[d] = np.sqrt(star['magerr_psf']*star['magerr_psf'] + magerr_sys2)
+                mag_errors[d] = np.sqrt(star['magerr_psf']*star['magerr_psf'] + magerr_sys2)
             
-                if use_color_terms and not ( use_precam and star['exposureid'] == precam_stars[0]['exposureid'] ):
+                if use_color_terms:
                     if star['exposureid'] not in mag_classes:
                         pwv = color_term_cal.get_pwv(star['mjd'])
                         mag_classes[star['exposureid']] = color_term_cal.color_term_correction(band,pwv,star['airmass'])
@@ -427,7 +587,7 @@ def nebencalibrate_pixel( inputs ):
                     mags[d] += color_term
                 
                 for p in precal:
-                    [pre_vector, precal_id_string, precal_operand, pre_median, pre_outliers] = p
+                    [pre_vector, precal_id_string, precal_operand, pre_median, pre_outliers, pre_labels] = p
                     if star[precal_id_string] in pre_vector:
                         coeff = None
                         if precal_operand == 'None' or precal_operand is None or precal_operand == 1:
@@ -473,7 +633,8 @@ def nebencalibrate_pixel( inputs ):
             sum_m_i = (mags*invsigma_array).sum() / sum_invsigma2
         
             b_vector = np.append( b_vector, mags - sum_m_i )
-        
+            mag_vector = np.append( mag_vector, mags )
+            
             a_submatrix = None
             for nid,id_string in enumerate(id_strings):
                 invsigma_matrix = np.tile(invsigma_array*operands[nid], (max_nimgs[nid],1))
@@ -511,7 +672,7 @@ def nebencalibrate_pixel( inputs ):
         
             # connectivity matrix
             # only for one image_id....
-            if require_standards and len(id_strings) == 1:
+            if len(id_strings) == 1:
                 for star in go_objects:
                     if star[id_string] in image_id_dict[0]:
                         for star2 in go_objects:
@@ -519,35 +680,25 @@ def nebencalibrate_pixel( inputs ):
                                 img_connectivity[image_id_dict[0][star[id_string]], image_id_dict[0][star2[id_string]]] = 1
                 
         print "%d good previous zps, %d bad" %(n_good_e, n_bad_e)
-    
+        print '{0} images in image_id_dict[0]'.format(len(image_id_dict[0].keys()))
         n_components = 1
-        standard_component = None
         labels = None
-        if require_standards:
-            if len(id_strings) > 1:
-                print "WARNING, not checking disjoing regions because you are using >1 id_string"
-            else:
-                n_components, labels = cs_graph_components(img_connectivity)
-                print "# disjoint regions: %d" %(n_components)
+        if len(id_strings) > 1:
+            print "WARNING, not checking disjoing regions because you are using >1 id_string"
+        else:
+            n_components, labels = cs_graph_components(img_connectivity)
+            print "# disjoint regions: %d" %(n_components)
         
-            id_string = id_strings[0]
-            if n_components > 1:
-                print "Warning, %d disjoint regions in the data!!" %n_components
-                if precam_ids[0] not in image_id_dict[0]:
-                    print "No standards in any of the regions!"
-                    has_precam = False
-                    p_vector = [0]
-                    return image_id_dict, p_vector, has_precam, None
-                standard_component = labels[image_id_dict[0][precam_ids[0]]]
-                labels[labels == -2] = np.max(labels)+1
-                n_w_standards = np.bincount(labels)[standard_component]
-                print "%d of %d images will be calibrated" %(n_w_standards, len(labels))
+        id_string = id_strings[0]
+        if n_components > 1:
+            print "Warning, %d disjoint regions in the data!!" %n_components
+        
         if( ndets == 0 ):
             # continue
-            return image_id_dict, p_vector, has_precam, None
+            return image_id_dict, p_vector, None, labels
     
         gcount = len(global_objs_list)
-        print "Looped through %d global objects, %d measurements total, %d from precam" %( gcount, ndets, precam_count )
+        print "Looped through %d global objects, %d measurements total" %( gcount, ndets )
         print "Mean RMS of the stars: %e" %(sum_rms/n_rms)
     
         print "matrix size = {0}".format(matrix_size)
@@ -555,12 +706,15 @@ def nebencalibrate_pixel( inputs ):
         print "len a_matrix vectors: {0}".format(len(a_matrix_ys))
         a_matrix = coo_matrix((a_matrix_vals[0:matrix_size], (a_matrix_ys[0:matrix_size], a_matrix_xs[0:matrix_size])), shape=(ndets,max_nimgs_total))
 
+        (a_matrix, b_vector, c_vector) = tie_idvals(a_matrix, b_vector, c_vector, mag_vector)
+        ndets = len(c_vector)
+        
         c_matrix = lil_matrix((ndets,ndets))
         c_matrix.setdiag(1.0/c_vector)
     
         # print a_matrix
         # print b_vector
-
+        
         # print "Calculating intermediate matrices..."
         
         subterm = (a_matrix.transpose()).dot(c_matrix)
@@ -572,7 +726,6 @@ def nebencalibrate_pixel( inputs ):
         # p_vector = linalg.spsolve(termA,termB)
         p_vector = linalg.minres(termA,termB)[0]
         
-        # normalize to the precam standards
         p_base = 0
         for nid, id_string in enumerate(id_strings):
             # only normalize the additive zero points...  not ideal, but not sure what's better.
@@ -580,26 +733,20 @@ def nebencalibrate_pixel( inputs ):
                 continue
             # deal with the indices for each id_string separately
             p_vector_indices = image_id_dict[nid].values()
-            if use_precam and precam_ids[nid] in image_id_dict[nid]:
-                print "%s: Normalizing to the PreCam standards!" %id_string
-                # replace zeros with nans
-                p_vector[p_vector == 0.0] = np.nan
-                p_vector[p_vector_indices] -= p_vector[p_base+image_id_dict[nid][precam_id]]
-                has_precam = 1
-            else:
-                # median = np.median(p_vector[p_vector_indices])
-                maximum = np.amax(p_vector[p_vector_indices])
-                print "%s: Normalizing to the maximum of the zeropoints: %e" %(id_string, maximum)
-                # replace zeros with nans
-                p_vector[p_vector == 0.0] = np.nan
-                p_vector[p_vector_indices] -= maximum
+            # normalize to the max of the ZPs (the best-quality obs)
+            # median = np.median(p_vector[p_vector_indices])
+            maximum = np.amax(p_vector[p_vector_indices])
+            print "%s: Normalizing to the maximum of the zeropoints: %e" %(id_string, maximum)
+            # replace zeros with nans
+            p_vector[p_vector == 0.0] = np.nan
+            p_vector[p_vector_indices] -= maximum
             p_base += max_nimgs[nid]
     
-        if len(id_strings) == 1:
-            if n_components > 1:
-                for p in range(len(p_vector)):
-                    if labels[p] != standard_component:
-                        p_vector[p] = np.nan
+        # if len(id_strings) == 1:
+        #     if n_components > 1:
+        #         for p in range(len(p_vector)):
+        #             if labels[p] != standard_component:
+        #                 p_vector[p] = np.nan
         
         print "Solution:"
         print p_vector.shape
@@ -685,7 +832,7 @@ def nebencalibrate_pixel( inputs ):
                     bad[nid][star[id_string]] = True
                 
                 for p in precal:
-                    [pre_vector, precal_id_string, precal_operand, pre_median, pre_outliers] = p
+                    [pre_vector, precal_id_string, precal_operand, pre_median, pre_outliers, pre_labels] = p
                     coeff = None
                     if precal_operand in [ 'None', None, 1 ]:
                         coeff = 1.
@@ -760,13 +907,23 @@ def nebencalibrate_pixel( inputs ):
             good_zps = []
             for idval in image_id_dict[nid].keys():
                 if not idval in bad_idvals[nid].keys():
-                    good_zps.append(p_vector[p_base+image_id_dict[nid][idval]])
+                    if np.isnan(p_vector[p_base+image_id_dict[nid][idval]]):
+                        bad_idvals[nid][idval] = True
+                        nimgs_flagged += 1
+                    else:
+                        good_zps.append(p_vector[p_base+image_id_dict[nid][idval]])
             mean_zp = np.mean(good_zps)
             rms_zp = np.std(good_zps)
             print 'zp mean {0} rms {1}'.format(mean_zp,rms_zp)
             for idval in dmag_by_img[nid].keys():
-                # cut at 2 sigma
-                if rms_by_img[idval] > 2.5*mean_rms or abs(p_vector[p_base+image_id_dict[nid][idval]]-mean_zp) > 2.5*rms_zp:
+                # cut at 2.5 sigma
+                # print 'idval {0}'.format(idval)
+                # print 'nid {0}'.format(nid)
+                # print 'p_base {0}'.format(p_base)
+                # print 'image_id_dict[nid][idval] {0}'.format(image_id_dict[nid][idval])
+                # print 'rms_by_img[idval] {0}'.format(rms_by_img[idval])
+                # print 'p_vector {0}'.format(p_vector[p_base+image_id_dict[nid][idval]])
+                if (idval in image_id_dict[nid]) and (rms_by_img[idval] > 2.5*mean_rms or abs(p_vector[p_base+image_id_dict[nid][idval]]-mean_zp) > 2.5*rms_zp):
                     # mark idval as bad
                     bad_idvals[nid][idval] = True
                     nimgs_flagged += 1
@@ -784,6 +941,7 @@ def nebencalibrate_pixel( inputs ):
     # this pairwise business will only work if there is one id_string at a time.
     p_vector_outlier = None
     outlier_list = []
+    labels_outliers = {}
     if len(id_strings) == 1:
         print 'Pairwise calibrating the outliers'
             
@@ -791,8 +949,8 @@ def nebencalibrate_pixel( inputs ):
         p_vector_outlier = {}
         nid = 0
         id_string = id_strings[0]
-        image_id_count_outlier = 0
-        image_id_dict_outlier = {}
+        # image_id_count_outlier = 0
+        # image_id_dict_outlier = {}
         
         a_matrix_xs = {}
         a_matrix_ys = {}
@@ -800,7 +958,7 @@ def nebencalibrate_pixel( inputs ):
         b_vector = {}
         c_vector = {}
         matrix_size = {}
-        ndets = {} 
+        ndets = {}
         for go in global_objs_list:
     
             if len(go.objects) < 2:
@@ -845,21 +1003,20 @@ def nebencalibrate_pixel( inputs ):
             mags_calib = np.zeros(ndet_calib)
             mag_errors_calib = np.zeros(ndet_calib)
             dc = 0
+            calib_label = None
+            uncalib_ids = []
             for s, star in enumerate(go_objects):
         
                 if calibrated[s]:
                     mags_calib[dc] = star['mag_psf']
-                    mag_errors_calib[dc] = star['magerr_psf']
-                    if star[id_strings[0]] != precam_ids[0]: # if not precam
-                        mag_errors_calib[dc] = np.sqrt(star['magerr_psf']*star['magerr_psf'] + magerr_sys2)            
+                    mag_errors_calib[dc] = np.sqrt(star['magerr_psf']*star['magerr_psf'] + magerr_sys2)            
+                    calib_label = labels[image_id_dict[0][star[id_strings[0]]]]
                 else:
                     outlier_idvals[star[id_string]] = True
                     mags[star[id_string]] = [star['mag_psf']]
-                    mag_errors[star[id_string]] = [star['magerr_psf']]
-                    if star[id_strings[0]] != precam_ids[0]: # if not precam
-                        mag_errors[star[id_string]] = [np.sqrt(star['magerr_psf']*star['magerr_psf'] + magerr_sys2)]
-    
-                if use_color_terms and not ( use_precam and star['exposureid'] == precam_stars[0]['exposureid'] ):
+                    mag_errors[star[id_string]] = [np.sqrt(star['magerr_psf']*star['magerr_psf'] + magerr_sys2)]
+                    uncalib_ids.append(star[id_string])
+                if use_color_terms:
                     if star['exposureid'] not in mag_classes:
                         pwv = color_term_cal.get_pwv(star['mjd'])
                         mag_classes[star['exposureid']] = color_term_cal.color_term_correction(band,pwv,star['airmass'])
@@ -875,7 +1032,7 @@ def nebencalibrate_pixel( inputs ):
                         mags[star[id_string]][0] += color_term
         
                 for p in precal:
-                    [pre_vector, precal_id_string, precal_operand, pre_median, pre_outliers] = p
+                    [pre_vector, precal_id_string, precal_operand, pre_median, pre_outliers, pre_labels] = p
                     if star[precal_id_string] in pre_vector:
                         coeff = None
                         if precal_operand == 'None' or precal_operand is None or precal_operand == 1:
@@ -905,7 +1062,10 @@ def nebencalibrate_pixel( inputs ):
             sum_invsigma2 = invsigma_array.sum()
             mean_calib = (mags_calib*invsigma_array).sum() / sum_invsigma2
             error_calib = np.median(mag_errors_calib)
-        
+            
+            for uncalib_id in uncalib_ids:
+                labels_outliers[uncalib_id] = calib_label
+            
             # now add the data to the a_matrices, with an a_matrix per idval.
             nid = 0
             id_string = id_strings[0]
@@ -913,7 +1073,11 @@ def nebencalibrate_pixel( inputs ):
             image_id_matrix_outlier = np.array([[1,0],[0,1]])
             a_submatrix = {}
             for idval in mags.keys():
-            
+                
+                if idval in ndets and ndets[idval] > max_dets:
+                    # not ideal, because we're randomly picking the first bunch.
+                    continue
+                
                 # add the calibrated data to the array
                 mags[idval].append(mean_calib)
                 mag_errors[idval].append(error_calib)
@@ -944,7 +1108,7 @@ def nebencalibrate_pixel( inputs ):
                 b_vector[idval] = np.append( b_vector[idval], mags[idval] - sum_m_i )
             
                 indices = np.where(a_submatrix[idval].data != 0.)[0]
-                if( matrix_size[idval]+len(indices) > len(a_matrix_xs) ):
+                if( matrix_size[idval]+len(indices) > len(a_matrix_xs[idval]) ):
                     a_matrix_xs[idval] = np.hstack((a_matrix_xs[idval],np.zeros(max_matrix_size)))
                     a_matrix_ys[idval] = np.hstack((a_matrix_ys[idval],np.zeros(max_matrix_size)))
                     a_matrix_vals[idval] = np.hstack((a_matrix_vals[idval],np.zeros(max_matrix_size)))
@@ -957,6 +1121,7 @@ def nebencalibrate_pixel( inputs ):
                 c_vector[idval] = np.append(c_vector[idval], invsigma_array)
 
                 ndets[idval] += ndet
+                
 
         n_outliers = len(a_matrix_vals.keys())
         for i, idval in enumerate(a_matrix_vals.keys()):
@@ -1026,52 +1191,47 @@ def nebencalibrate_pixel( inputs ):
         # add the outlier zps to the output
         for idval in p_vector_outlier.keys():
             image_id_dict[0][idval] = len(p_vectors[0])
+            labels = np.hstack((labels, [labels_outliers[idval]]))
             p_vectors[0] = np.hstack((p_vectors[0],p_vector_outlier[idval]))
     
-    return image_id_dict, p_vectors, has_precam, outlier_list
+    return image_id_dict, p_vectors, outlier_list, labels
 
 
 
-def nebencalibrate( band, nside, nside_file, id_strings, operands, precam_map, precam_stars, precal, globals_dir, require_standards=False, max_dets=1e9, ra_min=-360., ra_max=361., dec_min=91., dec_max=91., use_color_terms=False, mag_classes={} ):
-    
-    if len(precam_stars) == 0 and require_standards:
-        print "nebencalibrate: No standards, yet you are requiring standards!"
-        raise Exception
+def nebencalibrate( band, nside, nside_file, id_strings, operands, precal, globals_dir, max_dets=1e9, ra_min=-360., ra_max=361., dec_min=91., dec_max=91., use_color_terms=False, mag_classes={} ):
     
     npix = 1
     if nside>0:
         npix = healpy.nside2npix(nside)
     
-    precam_ids = dict()
-    if len(precam_stars) > 0:
-        for nid,id_string in enumerate(id_strings):
-            precam_ids[nid] = precam_stars[0][id_string]
-    else:
-        for nid,id_string in enumerate(id_strings):
-            precam_ids[nid] = None
-    
     p_vectors = []
     image_id_dicts = []
     outliers = []
+    labels = []
     for pix in range(npix):
         p_vectors.append(None)
         image_id_dicts.append(dict())
         outliers.append(None)
-        
+        labels.append(None)
+    
+    img_connectivity = None
+    max_nlabels = 10
+    if len(id_strings) == 1:
+        img_connectivity = np.zeros((max_nlabels*npix, max_nlabels*npix), dtype='int')
+    
+    
     # nebencalibrate the pixels!
-    has_precam = dict()
     pix_wobjs = []
     inputs= []
     for p in range(npix):
-        inputs.append( [p, nside, nside_file, band, precal, precam_stars, precam_map, globals_dir, id_strings, operands, max_dets, require_standards, ra_min, ra_max, dec_min, dec_max, use_color_terms, mag_classes] )
-        image_id_dicts[p], p_vectors[p], has_precam[p], outliers[p] = nebencalibrate_pixel(inputs[p])
-        if require_standards and not has_precam[p] and p_vectors[p] is not None:
-            print "No standards found in pixel %d for nside=%d.  Degrading!" %(p,nside)
-            return 'degrade'
+        inputs.append( [p, nside, nside_file, band, precal, globals_dir, id_strings, operands, max_dets, ra_min, ra_max, dec_min, dec_max, use_color_terms, mag_classes] )
+        image_id_dicts[p], p_vectors[p], outliers[p], labels[p] = nebencalibrate_pixel(inputs[p])
+        # if require_standards and not has_precam[p] and p_vectors[p] is not None:
+        #     print "No standards found in pixel %d for nside=%d.  Degrading!" %(p,nside)
+        #     return 'degrade'
         if p_vectors[p] is not None:
             pix_wobjs.append(p)
     npix_wobjs = len(pix_wobjs)
-    
     
     
     # now do another ubercalibration to make sure the pixels are normalized to each other
@@ -1080,27 +1240,34 @@ def nebencalibrate( band, nside, nside_file, id_strings, operands, precam_map, p
     # If there is only one pixel with objects, let's just save the ZPs and be done.
     zeropoints_tot = []
     outliers_tot = []
+    labels_tot = []
     if npix_wobjs == 1:
         for nid,id_string in enumerate(id_strings):
             zeropoints = dict()
             outliers_nid = []
             imagelist = []
+            labels0 = dict()
             for pix in range(npix):
                 if image_id_dicts[pix][nid] is not None:
                     imagelist.extend(image_id_dicts[pix][nid].keys())
             imagelist = list(set(imagelist))
             print "%s: There are %d images in total, from %d pixels." %(id_string, len(imagelist), npix_wobjs)
             
+            pix = pix_wobjs[0]
             for imageid in imagelist:
-                pix = pix_wobjs[0]
                 if (imageid in image_id_dicts[pix][nid]) and (p_vectors[pix][nid][image_id_dicts[pix][nid][imageid]] is not None) and (not np.isnan(p_vectors[pix][nid][image_id_dicts[pix][nid][imageid]])):
                     zeropoints[imageid] = p_vectors[pix][nid][image_id_dicts[pix][nid][imageid]]
+                    if nid == 0:
+                        labels0[imageid] = labels[pix][image_id_dicts[pix][nid][imageid]]
+                    else:
+                        labels0[imageid] = 1
                     if imageid in outliers[pix][nid]:
                         outliers_nid.append(imageid)
+            labels_tot.append(labels0)
             zeropoints_tot.append(zeropoints)
             outliers_tot.append(outliers_nid)
         
-        return zeropoints_tot, outliers_tot
+        return zeropoints_tot, outliers_tot, labels_tot
     
     
     # do this only for the first of the id_strings (TBD: do it for each?)
@@ -1183,7 +1350,7 @@ def nebencalibrate( band, nside, nside_file, id_strings, operands, precam_map, p
             pix = pix_wobjs[pix_id]
             if not nid in image_id_dicts[pix]:
                 continue
-            if (imageid in image_id_dicts[pix][nid]) and (imageid == precam_ids[nid] or p_vectors[pix][nid][image_id_dicts[pix][nid][imageid]] != 0.) and (p_vectors[pix][nid][image_id_dicts[pix][nid][imageid]] is not None) and not np.isnan(p_vectors[pix][nid][image_id_dicts[pix][nid][imageid]]):
+            if (imageid in image_id_dicts[pix][nid]) and (p_vectors[pix][nid][image_id_dicts[pix][nid][imageid]] != 0.) and (p_vectors[pix][nid][image_id_dicts[pix][nid][imageid]] is not None) and not np.isnan(p_vectors[pix][nid][image_id_dicts[pix][nid][imageid]]):
                 if (not use_outlier) and (imageid in outliers[pix][nid]):
                     continue
                 zps.append(p_vectors[pix][nid][image_id_dicts[pix][nid][imageid]])
@@ -1200,7 +1367,18 @@ def nebencalibrate( band, nside, nside_file, id_strings, operands, precam_map, p
                     pix_id_matrix2[pix_ids2[nzps],nzps] = 1
                 
                 nzps += 1
-
+                
+                for pix_id2 in range(npix_wobjs):
+                    pix2 = pix_wobjs[pix_id2]
+                    if not nid in image_id_dicts[pix2]:
+                        continue
+                    if (imageid in image_id_dicts[pix2][nid]) and (p_vectors[pix2][nid][image_id_dicts[pix2][nid][imageid]] != 0.) and (p_vectors[pix2][nid][image_id_dicts[pix2][nid][imageid]] is not None) and not np.isnan(p_vectors[pix2][nid][image_id_dicts[pix2][nid][imageid]]):
+                        if (not use_outlier) and (imageid in outliers[pix2][nid]):
+                            continue
+                        # link up the same images across pixels
+                        img_connectivity[max_nlabels*pix_id + labels[pix][image_id_dicts[pix][nid][imageid]], max_nlabels*pix_id2 + labels[pix2][image_id_dicts[pix2][nid][imageid]]] = 1
+        
+        
         if nzps == 0:
             print "Image %d has no zps" %imageid
             continue
@@ -1281,21 +1459,53 @@ def nebencalibrate( band, nside, nside_file, id_strings, operands, precam_map, p
     print "Mean RMS of the zps after correction: %e" %(sum_rms/n_rms)
     
     
-    # if using precam standards, normalize these zps to the pixels that had precam objects in them
-    if len(precam_stars) > 0:
-        precam_zp = 0.
-        precam_nzp = 0
-        for pix_id in pix_id_dict2.keys():
-            p1_vector_index = pix_id_dict2[pix_id]
+    
+    
+    n_components2 = 1
+    labels2 = None
+    if len(id_strings) > 1:
+        print "WARNING, not checking disjoing regions because you are using >1 id_string"
+    else:
+        n_components2, labels2 = cs_graph_components(img_connectivity)
+        if n_components2 > max_nlabels:
+            msg =  'Error dealing with disjoint regions, there are more than {0} of them.'.format(max_nlabels)
+            raise error(msg)
+        print "# disjoint regions: %d" %(n_components2)
+    if n_components2 > 1:
+        print "Warning, %d disjoint regions in the data!!" %n_components2
+    
+    
+    superlabels = {}
+    for imageid in imagelist:
+        for pix_id in range(npix_wobjs):
             pix = pix_wobjs[pix_id]
-            if pix in has_precam:
-                if has_precam[pix]:
-                    precam_zp += p1_vector[p1_vector_index]
-                    precam_nzp += 1
-        if precam_nzp > 0:
-            precam_zp /= precam_nzp
-        print "Normalizing all zps by the PreCam mean of %f from %d zps" %(precam_zp, precam_nzp)
-        p1_vector -= precam_zp
+            if not nid in image_id_dicts[pix]:
+                continue
+            if (imageid in image_id_dicts[pix][nid]) and (p_vectors[pix][nid][image_id_dicts[pix][nid][imageid]] != 0.) and (p_vectors[pix][nid][image_id_dicts[pix][nid][imageid]] is not None) and not np.isnan(p_vectors[pix][nid][image_id_dicts[pix][nid][imageid]]):
+                if (not use_outlier) and (imageid in outliers[pix][nid]):
+                    continue
+                superlabel = labels2[max_nlabels*pix_id+labels[pix][image_id_dicts[pix][nid][imageid]]]
+                if imageid in superlabels:
+                    if superlabels[imageid] != superlabel:
+                        print "WARNING, conflicting labels when combining pixel results"
+                else:
+                    superlabels[imageid] = superlabel
+    
+    # # if using precam standards, normalize these zps to the pixels that had precam objects in them
+    # if len(precam_stars) > 0:
+    #     precam_zp = 0.
+    #     precam_nzp = 0
+    #     for pix_id in pix_id_dict2.keys():
+    #         p1_vector_index = pix_id_dict2[pix_id]
+    #         pix = pix_wobjs[pix_id]
+    #         if pix in has_precam:
+    #             if has_precam[pix]:
+    #                 precam_zp += p1_vector[p1_vector_index]
+    #                 precam_nzp += 1
+    #     if precam_nzp > 0:
+    #         precam_zp /= precam_nzp
+    #     print "Normalizing all zps by the PreCam mean of %f from %d zps" %(precam_zp, precam_nzp)
+    #     p1_vector -= precam_zp
     
     
     # now compile all the info into one zp per image.
@@ -1313,14 +1523,22 @@ def nebencalibrate( band, nside, nside_file, id_strings, operands, precam_map, p
         if zp_n > 0:
             zp_tot /= zp_n
             zeropoints[imageid] = zp_tot
+            
+            # if there's no label for this data, give it #999
+            if imageid not in superlabels:
+                superlabels[imageid] = 999
+            
         # if there is no p1_vector solution (if all instances of an imagid were outliers) then there is no saved zp.
     zeropoints_tot.append(zeropoints)
+    labels_tot = [superlabels]
     
     # are there more id_strings?
+    # make all labels the same
     if len(id_strings)>1:
         for nid,id_string in enumerate(id_strings[1:]):
             nid1 = nid+1 # because enumerate starts from zero
             zeropoints = dict()
+            labels = dict()
             imagelist1 = []
             for pix in range(npix):
                 if image_id_dicts[pix] is not None:
@@ -1337,15 +1555,16 @@ def nebencalibrate( band, nside, nside_file, id_strings, operands, precam_map, p
                 if zp_n > 0:
                     zp_tot /= zp_n
                 zeropoints[imageid] = zp_tot
+                labels[imageid] = 0
             zeropoints_tot.append(zeropoints)
-    
+            labels_tot.append(labels)
     
     # put the outlier info in the right format
     outliers_tot.append(outliers_nid)
     for nid in range(len(id_strings)-1):
         outliers_tot.append([])
     
-    return zeropoints_tot, outliers_tot
+    return zeropoints_tot, outliers_tot, labels_tot
 
 
 def calibrate_by_filter(config):
@@ -1361,39 +1580,24 @@ def calibrate_by_filter(config):
         if entries[0][0] == '#':
             continue
         zp_phots[int(entries[0])] = -1.0*float(entries[4])
-    # include precam fake entry
-    zp_phots[0] = 0.
-    
-    # read in any catalogs we would like to treat as standards (i.e. precam, sdss...)
-    precam_stars = []
-    precam_map = index.Index()
-    if config['general']['use_precam']:
-        read_precam( precam_stars, precam_map, config['general']['precam_filename'], band )
-    if config['general']['use_sdss']:
-        read_sdss( precam_stars, precam_map, config['general']['sdss_filename'], band )
-    if config['general']['use_betoule']:
-        read_betoule( precam_stars, precam_map, config['general']['betoule_filename'], band )
-    
     
     # calibrate!
     
     # use the zp_phots as a starting point to our calibration
-    precal = [[zp_phots, 'ccd', 1, np.median(zp_phots.values()), []]]
+    zp_phot_labels = {}
+    for nc in range(63):
+        zp_phot_labels[nc] = 0
+    precal = [[zp_phots, 'ccd', 1, np.median(zp_phots.values()), [], zp_phot_labels]]
     
     # initialize the color term structure, which will be filled up as needed during the calibration
     colorterm_class = {}
     
     for calibration in config['calibrations']:
         print "\nStarting calibration on ids %s, operands %s\n" %(calibration['id_strings'], calibration['operands'])
-        standard_stars = []
-        standard_map = None
-        if calibration['use_standards']:
-            standard_stars = precam_stars
-            standard_map = precam_map
         success = False
         results = None
         while not success:
-            results = nebencalibrate( band, calibration['nside'], config['general']['nside_file'], calibration['id_strings'], calibration['operands'], standard_map, standard_stars, precal, config['general']['globals_dir'], require_standards=calibration['require_standards'], max_dets=calibration['max_dets'], ra_min=config['general']['ra_min'], ra_max=config['general']['ra_max'], dec_min=config['general']['dec_min'], dec_max=config['general']['dec_max'], use_color_terms=config['general']['use_color_terms'], mag_classes=colorterm_class )
+            results = nebencalibrate( band, calibration['nside'], config['general']['nside_file'], calibration['id_strings'], calibration['operands'], precal, config['general']['globals_dir'], max_dets=calibration['max_dets'], ra_min=config['general']['ra_min'], ra_max=config['general']['ra_max'], dec_min=config['general']['dec_min'], dec_max=config['general']['dec_max'], use_color_terms=config['general']['use_color_terms'], mag_classes=colorterm_class )
             if results == 'degrade':
                 if calibration['nside'] == 1:
                     calibration['nside'] = 0
@@ -1405,17 +1609,26 @@ def calibrate_by_filter(config):
             else:
                 success = True
         
-        new_zps, new_outliers = results
+        new_zps, new_outliers, new_labels = results
         for i in range(len(calibration['id_strings'])):
             outfile = open( calibration['outfilenames'][i], 'w' )
             for zp_id in new_zps[i].keys():
-                outfile.write( "%d %e\n" %(zp_id, new_zps[i][zp_id]) );
+                outfile.write( "%d %e %d\n" %(zp_id, new_zps[i][zp_id], new_labels[i][zp_id]) );
             outfile.close()
         
         # so that we use these as input to the following calibration(s)
         for i in range(len(calibration['id_strings'])):
-            precal.append([new_zps[i], calibration['id_strings'][i], calibration['operands'][i], np.median(new_zps[i].values()), new_outliers[i]])
+            precal.append([new_zps[i], calibration['id_strings'][i], calibration['operands'][i], np.median(new_zps[i].values()), new_outliers[i], new_labels[i]])
+    
+    # now do an ubercalibration to the standards.
+    if config['general']['use_standards']:
+        std_zps = std_ubercal( band, precal, config['general'] )
         
+        outfile = open( config['general']['stdzp_outfilename'], 'w' )
+        for label in std_zps:
+            outfile.write( "%d %e\n" %(label, std_zps[label] ) )
+        outfile.close()
+
 
 def main():
     
