@@ -3,7 +3,6 @@ import os
 import math
 import re
 import subprocess
-# from operator import itemgetter
 import random
 import yaml
 import cPickle
@@ -14,13 +13,11 @@ from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 import seaborn as sns
-# sb_dark = seaborn.dark_palette("skyblue", 8, reverse=True)
-# seaborn.set(palette = seaborn.color_palette("coolwarm", 7))
-# seaborn.set_palette("hls")
-sns.set(rc={'image.cmap': "RdBu_r"})
+#sns.set(rc={'image.cmap': "RdBu_r"})
+colormap="RdYlBu"
+sns.set(rc={'image.cmap': colormap})
 from operator import itemgetter, attrgetter
 from rtree import index
-# from scipy.stats import scoreatpercentile
 from scipy.optimize import curve_fit
 from pyspherematch import spherematch
 
@@ -34,6 +31,7 @@ from nebencal_utils import standard_quality
 from nebencal_utils import apply_zps
 from nebencal_utils import apply_color_term
 from nebencal_utils import apply_stdcal
+from nebencal_utils import read_ccdpos
 
 colorterm_dir = '/Users/bauer/software/python/des/des_calib/ting/color-term'
 sys.path.append(colorterm_dir)
@@ -62,15 +60,8 @@ def make_plots(config):
     
     band = config['general']['filter']
     
-    # palette = sns.color_palette("coolwarm")
-    # sns.set_palette(palette) 
-    
     globals_dir = config['general']['globals_dir']
     current_dir = os.getcwd()
-    use_spxzps = False
-    use_imgzps = True
-    use_expzps = True
-    use_exp_fpr_zps = False
 
     nside = config['general']['nside_file']
     n_ccds = 63
@@ -83,8 +74,6 @@ def make_plots(config):
     mag_classes={}
     
     fileband = band
-    # if band == 'y':
-    #     fileband = 'Y'
 
     # read in any catalogs we would like to treat as standards (i.e. precam, sdss...)
     standard_stars = []
@@ -121,6 +110,11 @@ def make_plots(config):
             continue
         zp_phots[int(entries[0])] = -1.0*float(entries[4])
     print "Read in ccd offsets (zp_phots)"
+    
+    # fill in any missing ones to avoid key errors
+    for i in range(n_ccds):
+        if i not in zp_phots:
+            zp_phots[i] = -999.
 
     # NOTE: assumes that the id_string is an integer!
     # read in the rest of the zps
@@ -152,31 +146,7 @@ def make_plots(config):
         print 'Read in the zeropoint to standards'
     
     # read in the CCD positions in the focal plane
-    posfile = open("/Users/bauer/surveys/DES/ccdPos-v2.par", 'r')
-    posarray = posfile.readlines()
-    fp_xs = []
-    fp_ys = []
-    fp_xindices = []
-    fp_yindices = []
-    # put in a dummy ccd=0
-    fp_xs.append(0.)
-    fp_ys.append(0.)
-    fp_xindices.append(0.)
-    fp_yindices.append(0.)
-    for i in range(21,83,1):
-        entries = posarray[i].split(" ")
-        fp_yindices.append(int(entries[2])-1)
-        fp_xindices.append(int(entries[3])-1)
-        fp_xs.append(66.6667*(float(entries[4])-211.0605) - 1024) # in pixels
-        fp_ys.append(66.6667*float(entries[5]) - 2048)
-    # fp_ys.append(fp_xs[-1])
-    # fp_xs.append(fp_ys[-1])
-    fp_yindices.append(fp_yindices[-1])
-    fp_xindices.append(fp_xindices[-1])
-    fp_xoffsets = [4,3,2,1,1,0,0,1,1,2,3,4]
-    fp_xindices = 2*np.array(fp_xindices)
-    fp_yindices = np.array(fp_yindices)
-    print "parsed focal plane positions for %d ccds" %len(fp_xs)
+    fp_xs, fp_ys = read_ccdpos()
 
 
     # which pixels exist?  check file names.
@@ -201,49 +171,17 @@ def make_plots(config):
     pix_wobjs = sorted(pix_dict.keys())
     npix_wobjs = len(pix_wobjs)
     print "%d pixels have data; %d total" %(npix_wobjs, n_globals)
-
-    n_hist = n_globals # 5000000
-    image_ras = dict()
-    image_decs = dict()
-    image_diffas = dict()
-    image_diffbs = dict()
-    image_ns = dict()
-    image_ccds = dict()
-    image_resids_b = dict()
-    image_resids_a = dict()
-    image_befores = dict()
-    image_afters = dict()
-    sdss_mags = dict()
+    
+    
+    n_max_std = 5000
+    n_max_des = 5000
+    std_data = { 'ras':np.zeros(n_max_std), 'decs':np.zeros(n_max_std), 'mags':np.zeros(n_max_std), 'mags_calib':np.zeros(n_max_std), 'mags_std':np.zeros(n_max_std), 'xs':np.zeros(n_max_std), 'ys':np.zeros(n_max_std), 'bad':np.zeros(n_max_std,dtype='bool') }
+    des_data = { 'ras':np.zeros(n_max_des), 'decs':np.zeros(n_max_des), 'mags':np.zeros(n_max_des), 'mag_errs':np.zeros(n_max_des), 'mags_calib':np.zeros(n_max_des), 'mags_mean':np.zeros(n_max_des), 'mags_mean_calib':np.zeros(n_max_des), 'xs':np.zeros(n_max_des), 'ys':np.zeros(n_max_des), 'bad':np.zeros(n_max_des,dtype='bool') }
+    std_index = 0
+    des_index = 0
+    
     validation_ras = [o['ra']-360. if o['ra']>270. else o['ra'] for o in validation_stars]
     validation_decs = [o['dec'] for o in validation_stars]
-    standard_ras = [o['ra']-360. if o['ra']>270. else o['ra'] for o in standard_stars]
-    standard_decs = [o['dec'] for o in standard_stars]
-    sum_rms_before = 0.
-    sum_rms_after = 0.
-    n_rms = 0
-    rms_befores = np.zeros(n_hist)
-    rms_afters = np.zeros(n_hist)
-    meandiff_befores = np.zeros(n_hist)
-    meandiff_afters = np.zeros(n_hist)
-    hist_count = 0
-    total_magdiffsb = []
-    total_magdiffsa = []
-
-    plot_resids_b2 = []
-    plot_resids_a2 = []
-    plot_resids_c2 = []
-    plot_resids_d2 = []
-    plot_resids_e2 = []
-    plot_resids_f2 = []
-    plot_resids_b2_xs = []
-    plot_resids_b2_ys = []
-    plot_resids_ras = []
-    plot_resids_decs = []
-    rel_resids_magafter = []
-    rel_resids_b2_xs = []
-    rel_resids_b2_ys = []
-    rel_resids_ras = []
-    rel_resids_decs = []
     
     bad_idvals = {}
     for zps in zp_list:
@@ -258,10 +196,6 @@ def make_plots(config):
         global_objs = read_global_objs(band, globals_dir, nside, nside, pix, verbose=False)
         if global_objs is None or len(global_objs) == 0:
             continue
-        # filename = 'gobjs_' + str(band) + '_nside' + str(nside) + '_p' + str(pix)
-        # file = open(os.path.join(globals_dir,filename), 'rb')
-        # global_objs = cPickle.load(file)
-        # file.close()
     
         global_ras = [o.ra-360. if o.ra>270. else o.ra for o in global_objs]
         global_decs = [o.dec for o in global_objs]
@@ -279,304 +213,175 @@ def make_plots(config):
             ndet = len(go.objects)
             sdss_match = validation_stars[inds2[i]]
             
-            mags_before = np.zeros(ndet)
-            mags_after = np.zeros(ndet)
-            mag_errors2 = np.zeros(ndet)
-            iids = np.zeros(ndet, dtype='int')
-            ccds = np.zeros(ndet, dtype='int')
-            xs = np.zeros(ndet)
-            ys = np.zeros(ndet)
-            d=0
-            for d0 in range(ndet):
-                image_id = go.objects[d0]['image_id']
-                if image_id == 1:
-                    continue
-                mag_psf = go.objects[d0]['mag_psf']
-                magerr_psf = go.objects[d0]['magerr_psf']
-                xs[d]= go.objects[d0]['x_image']
-                ys[d] = go.objects[d0]['y_image']
-                ccd = go.objects[d0]['ccd']
-                spx = int(4*np.floor(ys[d]/512.) + np.floor(xs[d]/512.) + 32*(ccd))
-                exposureid = go.objects[d0]['exposureid']
-                image_ccds[image_id] = ccd
-                ccds[d] = ccd
-                mags_before[d] = mag_psf
-                mags_after[d] = mag_psf
-                badmag = False
-                if ccd in zp_phots:
-                    mags_before[d] += zp_phots[ccd]
-                    mags_after[d] += zp_phots[ccd]
-                else:
-                    badmag = True
-                # if config['general']['use_color_terms']:
-                #     mags_before[d] = apply_color_term(mags_before[d], go, fp_xs, fp_ys, mag_classes)
-                #     mags_after[d] = apply_color_term(mags_after[d], go, fp_xs, fp_ys, mag_classes)
-                mags_after[d] = apply_zps( mags_after[d], go.objects[d0], zp_list, bad_idvals )
-                if not mags_after[d]:
-                    badmag = True
-                    continue
+            # increase the array lengths if necessary
+            if( std_index+ndet >= n_max_std ):
+                for key in std_data.keys():
+                    std_data[key] = np.hstack((std_data[key],np.zeros(n_max_std)))
+                n_max_std += n_max_std
+            
+            ccds = np.array([o['ccd'] for o in go.objects],dtype='int')
+            zp_ps = np.array([zp_phots[ccd] for ccd in ccds])
+            mags_before = np.array([o['mag_psf'] for o in go.objects]) + zp_ps
+            mags_after = np.array(mags_before)
+            xs = np.array([o['x_image'] + fp_xs[o['ccd']] for o in go.objects])
+            ys = np.array([o['y_image'] + fp_ys[o['ccd']] for o in go.objects])
+            
+            for j,obj in zip(range(ndet),go.objects):
+                mags_after[j] = apply_zps(mags_after[j], obj, zp_list, bad_idvals)
                 if config['general']['use_standards']:
-                    mags_after[d] = apply_stdcal( mags_after[d], go.objects[d0], zp_list, std_zp_dict )
-                    if not mags_after[d]:
-                        badmag = True
-                        continue
-                mag_errors2[d] = magerr_psf*magerr_psf + magerr_sys2
-                iids[d] = image_id
-                total_magdiffsb.append(mags_before[d] - sdss_match['mag_psf'])
-                total_magdiffsa.append(mags_after[d] - sdss_match['mag_psf'])
-                try:
-                    image_ras[image_id] += go.ra
-                    image_decs[image_id] += go.dec
-                    image_diffbs[image_id] += mags_before[d] - sdss_match['mag_psf']
-                    image_diffas[image_id] += mags_after[d] - sdss_match['mag_psf']
-                    image_befores[image_id] += mags_before[d]
-                    image_afters[image_id] += mags_after[d]
-                    sdss_mags[image_id] += sdss_match['mag_psf']
-                    image_ns[image_id] += 1
-                except KeyError:
-                    # the current image id is not in the image_ids dictionary yet
-                    image_ras[image_id] = go.ra
-                    image_decs[image_id] = go.dec
-                    image_diffbs[image_id] = mags_before[d] - sdss_match['mag_psf']
-                    image_diffas[image_id] = mags_after[d] - sdss_match['mag_psf']
-                    image_befores[image_id] = mags_before[d]
-                    image_afters[image_id] = mags_after[d]
-                    sdss_mags[image_id] = sdss_match['mag_psf']
-                    image_ns[image_id] = 1
-                d+=1
-            ndet=d
-            if ndet < 2:
-                continue
-            mags_before = mags_before[0:ndet]
-            mags_after = mags_after[0:ndet]
-            mag_errors2 = mag_errors2[0:ndet]
-            iids = iids[0:ndet]
-            ccds = ccds[0:ndet]
-            xs = xs[0:ndet]
-            ys = ys[0:ndet]
-            invsigma_array = 1.0/mag_errors2
-            sum_invsigma2 = invsigma_array.sum()
-            sum_m_before = (mags_before*invsigma_array).sum() / sum_invsigma2
-            sum_m_after = (mags_after*invsigma_array).sum() / sum_invsigma2
-        
-            for d in range(ndet):
-                plot_resids_b2.append(mags_before[d] - sdss_match['mag_psf'])
-                plot_resids_b2_xs.append(xs[d] + fp_xs[ccds[d]])
-                plot_resids_b2_ys.append(ys[d] + fp_ys[ccds[d]])
-                plot_resids_a2.append(mags_after[d] - sdss_match['mag_psf'])
-                plot_resids_ras.append(go.ra)
-                plot_resids_decs.append(go.dec)
-                try:
-                    image_resids_b[iids[d]] += mags_before[d] - sdss_match['mag_psf']
-                    image_resids_a[iids[d]] += mags_after[d] - sdss_match['mag_psf']
-                except KeyError:
-                    image_resids_b[iids[d]] = mags_before[d] - sdss_match['mag_psf']
-                    image_resids_a[iids[d]] = mags_after[d] - sdss_match['mag_psf']
-
-            # calculate rms before and after
-            rms_before = np.std(mags_before-sdss_match['mag_psf'])
-            rms_after = np.std(mags_after-sdss_match['mag_psf'])
-            # meandiff_before = sum_m_before - sdss_match['mag_psf']
-            # meandiff_after = sum_m_after - sdss_match['mag_psf']
-            # if meandiff_after < -3.:
-            #     print "%f %f %f %f %d" %(sum_m_before, sum_m_after, zps[image_id], sdss_match['mag_psf'], image_id)
-            sum_rms_before += rms_before
-            sum_rms_after += rms_after
-        
-            rms_befores[hist_count] = rms_before
-            rms_afters[hist_count] = rms_after
-            # meandiff_befores[hist_count] = meandiff_before
-            # meandiff_afters[hist_count] = meandiff_after
-            hist_count += 1
-        
-            n_rms += 1
+                    mags_after[j] = apply_stdcal(mags_after[j], obj, zp_list, std_zp_dict)
+            
+            std_data['ras'][std_index:std_index+ndet] = go.ra*np.ones(ndet)
+            std_data['decs'][std_index:std_index+ndet] = go.dec*np.ones(ndet)
+            std_data['mags'][std_index:std_index+ndet] = mags_before
+            std_data['mags_calib'][std_index:std_index+ndet] = mags_after
+            std_data['mags_std'][std_index:std_index+ndet] = sdss_match['mag_psf']*np.ones(ndet)
+            std_data['xs'][std_index:std_index+ndet] = xs
+            std_data['ys'][std_index:std_index+ndet] = ys
+            std_data['bad'][std_index:std_index+ndet] = (zp_ps<-900.)
+            std_index += ndet
         
         # end loop over matches with standards
         
         # only look at a random sample if the list of objects is really long
+        indices = np.array(range(len(global_objs)), dtype='int')
         if len(global_objs) > 100000:
-            indices = range(len(global_objs))
             np.random.shuffle(indices)
             indices = indices[0:100000]
-        else:
-            indices = range(len(global_objs))
         
-        for i in indices:
-            go = global_objs[i]
+        # collect stats
+        # good_objs = filter(filter_go, global_objs[indices])
+        for g in indices:
+            go = global_objs[g]
             
             if not filter_go(go, config):
                 continue
             
             if go.ra > 270.:
                 go.ra -= 360.
+            
             ndet = len(go.objects)
-            
-            # want: plot_resids_c2, plot_resids_d2, copies of: plot_resids_b2_xs, plot_resids_b2_ys, plot_resids_ras, plot_resids_decs
-            mags_before = np.zeros(ndet)
-            mags_after = np.zeros(ndet)
-            mag_errors2 = np.zeros(ndet)
-            ccds = np.zeros(ndet, dtype='int')
-            xs = np.zeros(ndet)
-            ys = np.zeros(ndet)
-            d=0
-            for d0 in range(ndet):
-                image_id = go.objects[d0]['image_id']
-                if image_id == 1:
-                    continue
-                mag_psf = go.objects[d0]['mag_psf']
-                magerr_psf = go.objects[d0]['magerr_psf']
-                xs[d]= go.objects[d0]['x_image']
-                ys[d] = go.objects[d0]['y_image']
-                ccd = go.objects[d0]['ccd']
-                spx = int(4*np.floor(ys[d]/512.) + np.floor(xs[d]/512.) + 32*(ccd))
-                exposureid = go.objects[d0]['exposureid']
-                ccds[d] = ccd
-                mags_before[d] = mag_psf
-                mags_after[d] = mag_psf
-                mag_errors2[d] = magerr_psf*magerr_psf + magerr_sys2
-                badmag = False
-                if ccd in zp_phots:
-                    mags_before[d] += zp_phots[ccd]
-                    mags_after[d] += zp_phots[ccd]
-                else:
-                    badmag = True
-                # if config['general']['use_color_terms']:
-                #     mags_before[d] = apply_color_term(mags_before[d], go, fp_xs, fp_ys, mag_classes)
-                #     mags_after[d] = apply_color_term(mags_after[d], go, fp_xs, fp_ys, mag_classes)
-                mags_after[d] = apply_zps( mags_after[d], go.objects[d0], zp_list, bad_idvals )
-                if not mags_after[d]:
-                    badmag = True
-                    continue
-                if config['general']['use_standards']:
-                    mags_after[d] = apply_stdcal( mags_after[d], go.objects[d0], zp_list, std_zp_dict )
-                    if not mags_after[d]:
-                        badmag = True
-                        continue
-                d+=1
-            ndet=d
-            if ndet < 2:
+            if ndet<2:
                 continue
-            mags_before = mags_before[0:ndet]
-            mags_after = mags_after[0:ndet]
-            mag_errors2 = mag_errors2[0:ndet]
-            xs = xs[0:ndet]
-            ys = ys[0:ndet]
-            invsigma_array = 1.0/mag_errors2
-            sum_invsigma2 = invsigma_array.sum()
-            sum_m_before = (mags_before*invsigma_array).sum() / sum_invsigma2
-            sum_m_after = (mags_after*invsigma_array).sum() / sum_invsigma2
             
-            for d in range(ndet):
-                plot_resids_c2.append(mags_before[d]-sum_m_before)
-                plot_resids_d2.append(mags_after[d]-sum_m_after)
-                plot_resids_e2.append(mags_after[d]-sum_m_before)
-                plot_resids_f2.append(mags_after[d]-mags_before[d])
-                rel_resids_b2_xs.append(xs[d] + fp_xs[ccds[d]])
-                rel_resids_b2_ys.append(ys[d] + fp_ys[ccds[d]])
-                rel_resids_ras.append(go.ra)
-                rel_resids_decs.append(go.dec)
-                rel_resids_magafter.append(mags_after[d])
+            # increase the array lengths if necessary
+            if( des_index+ndet >= n_max_des ):
+                for key in des_data.keys():
+                    des_data[key] = np.hstack((des_data[key],np.zeros(n_max_des)))
+                n_max_des += n_max_des
+            
+            ccds = np.array([o['ccd'] for o in go.objects],dtype='int')
+            zp_ps = np.array([zp_phots[ccd] for ccd in ccds])
+            
+            good_indices = (zp_ps>-900)
+            if np.sum(good_indices)<2:
+                continue
+            
+            mags_before = np.array([o['mag_psf'] for o in go.objects]) + zp_ps
+            mags_after = np.array(mags_before)
+            mag_errors2 = np.array([o['magerr_psf']*o['magerr_psf'] for o in go.objects]) + magerr_sys2
+            xs = np.array([o['x_image'] + fp_xs[o['ccd']] for o in go.objects])
+            ys = np.array([o['y_image'] + fp_ys[o['ccd']] for o in go.objects])
+            
+            for i,obj in zip(range(ndet),go.objects):
+                mags_after[i] = apply_zps(mags_after[i], obj, zp_list, bad_idvals)
+                if config['general']['use_standards']:
+                    mags_after[i] = apply_stdcal(mags_after[i], obj, zp_list, std_zp_dict)
+            
+            invsigma_array = 1.0/mag_errors2[good_indices]
+            sum_invsigma2 = invsigma_array.sum()
+            mag_before = (mags_before[good_indices]*invsigma_array).sum() / sum_invsigma2
+            mag_after = (mags_after[good_indices]*invsigma_array).sum() / sum_invsigma2
+            if mag_before<0.:
+                print 'BAD MAG_BEFORE {0}'.format(mag_before)
+                print mags_before
+                print invsigma_array
+                print sum_invsigma2
+            
+            des_data['ras'][des_index:des_index+ndet] = go.ra*np.ones(ndet)
+            des_data['decs'][des_index:des_index+ndet] = go.dec*np.ones(ndet)
+            des_data['mags'][des_index:des_index+ndet] = mags_before
+            des_data['mag_errs'][des_index:des_index+ndet] = mag_errors2
+            des_data['mags_calib'][des_index:des_index+ndet] = mags_after
+            des_data['mags_mean'][des_index:des_index+ndet] = mag_before*np.ones(ndet)
+            des_data['mags_mean_calib'][des_index:des_index+ndet] = mag_after*np.ones(ndet)
+            des_data['xs'][des_index:des_index+ndet] = xs
+            des_data['ys'][des_index:des_index+ndet] = ys
+            des_data['bad'][des_index:des_index+ndet] = (zp_ps<-900.)
+            
+            des_index += ndet
+    
+    # crop the arrays
+    good_indices = (std_data['bad'] == False)
+    n_bad = np.sum(std_data['bad'])
+    for key in std_data.keys():
+        std_data[key] = std_data[key][good_indices]
+        std_data[key] = std_data[key][0:std_index-n_bad]
+    print '{0} bad zp_phots among {1} standard measurements'.format(int(n_bad), len(std_data['mags']))
+    good_indices = (des_data['bad'] == False)
+    n_bad = np.sum(des_data['bad'])
+    for key in des_data.keys():
+        des_data[key] = des_data[key][good_indices]
+        des_data[key] = des_data[key][0:des_index-n_bad]
+    print '{0} bad zp_phots among {1} DES measurements'.format(int(n_bad), len(des_data['mags']))
     
     print ""
+    stddev_des_before = np.std(des_data['mags']-des_data['mags_mean'])
+    stddev_des_after = np.std(des_data['mags_calib']-des_data['mags_mean_calib'])
+    stddev_std_before = np.std(std_data['mags']-std_data['mags_std'])
+    stddev_std_after = np.std(std_data['mags_calib']-std_data['mags_std'])
+    print 'Std Dev before: {0}'.format(stddev_des_before)
+    print 'Std Dev after: {0}'.format(stddev_des_after)
     
-    for zps in zp_list:
-        print 'zp id_string {0}: {1} good zps and {2} bad.'.format(zps['id_string'], len(zps.keys())-2, len(bad_idvals[zps['id_string']].keys()))
-
-    plot_resids_b2_xs = np.array(plot_resids_b2_xs)
-    plot_resids_b2_ys = np.array(plot_resids_b2_ys)
-    plot_resids_b2_rs = np.sqrt(plot_resids_b2_xs*plot_resids_b2_xs + plot_resids_b2_ys*plot_resids_b2_ys)
-    plot_resids_a2 = np.array(plot_resids_a2)
-    plot_resids_b2 = np.array(plot_resids_b2)
-    plot_resids_c2 = np.array(plot_resids_c2)
-    plot_resids_d2 = np.array(plot_resids_d2)
-    plot_resids_e2 = np.array(plot_resids_e2)
-    plot_resids_f2 = np.array(plot_resids_f2)
-    plot_resids_ras = np.array(plot_resids_ras)
-    plot_resids_decs = np.array(plot_resids_decs)
-    rel_resids_ras = np.array(rel_resids_ras)
-    rel_resids_decs = np.array(rel_resids_decs)
-    rel_resids_b2_xs = np.array(rel_resids_b2_xs)
-    rel_resids_b2_ys = np.array(rel_resids_b2_ys)
-    rel_resids_magafter = np.array(rel_resids_magafter)
-    
-    for iid in image_resids_a.keys():
-        image_ras[iid] /= image_ns[iid]
-        image_decs[iid] /= image_ns[iid]
-        image_diffas[iid] /= image_ns[iid]
-        image_diffbs[iid] /= image_ns[iid]
-        image_resids_b[iid] /= image_ns[iid]
-        image_resids_a[iid] /= image_ns[iid]
-        image_befores[iid] /= image_ns[iid]
-        image_afters[iid] /= image_ns[iid]
-        sdss_mags[iid] /= image_ns[iid]
-
-    sum_rms_before /= n_rms
-    sum_rms_after /= n_rms
-    print
-    print "RMS before: %f" %sum_rms_before
-    print "RMS after: %f" %sum_rms_after
-
     # plots!
-
-    if len(total_magdiffsa) > 100000:
-            total_magdiffsb = random.sample(total_magdiffsb, 100000)
-            total_magdiffsa = random.sample(total_magdiffsa, 100000)
     
-    rel_indices = range(len(rel_resids_ras))
-    if len(rel_resids_ras) > 50000:
-        np.random.shuffle(rel_indices)
-        rel_indices = rel_indices[0:50000]
-        
     fig = plt.figure()
-    onesigma = (np.percentile(total_magdiffsb, 84) - np.percentile(total_magdiffsb, 16))/2.
-    # title = "Mag offset before calibration, med %e, rms %e" %(np.median(total_magdiffsb), np.std(total_magdiffsb))
-    title = "Mag offset before calibration, med %e, 68%% error %e" %(np.median(total_magdiffsb), onesigma)
+    offset_before = std_data['mags']-std_data['mags_std']
+    title = "Mag offset before cal, med %e, std dev %e" %(np.median(offset_before), np.std(offset_before))
     print title
     ax0 = fig.add_subplot(1,1,1, title=title)
     ax0.set_yscale('log')
-    ax0.hist(total_magdiffsb, 100)
+    ax0.hist(offset_before, 100)
     pp.savefig()
 
     fig = plt.figure()
-    onesigma = (np.percentile(total_magdiffsa, 84) - np.percentile(total_magdiffsa, 16))/2.
-    # title = "Mag offset after calibration, med %e, rms %e" %(np.median(total_magdiffsa), np.std(total_magdiffsa))
-    title = "Mag offset after calibration, med %e, 68%% error %e" %(np.median(total_magdiffsa), onesigma)
+    offset_after = std_data['mags_calib']-std_data['mags_std']
+    title = "Mag offset after cal, med %e, std dev %e" %(np.median(offset_after), np.std(offset_after))
     print title
     ax0 = fig.add_subplot(1,1,1, title=title)
     ax0.set_yscale('log')
-    ax0.hist(total_magdiffsa, 100)
+    ax0.hist(offset_after, 100)
     pp.savefig()
 
     # histogram of diff of individual objects before calibration
     fig = plt.figure()
-    title = "Mag diff from mean before cal (std dev %e)" %np.std(plot_resids_c2)
+    diff_before = des_data['mags']-des_data['mags_mean']
+    title = "Mag diff from mean before cal (std dev %e)" %np.std(diff_before)
     print title
     xlab = "Magnitudes (%s band)" %band
     ylab = ""
     ax0 = fig.add_subplot(1,1,1, xlabel=xlab, ylabel=ylab, title=title)
     ax0.set_yscale('log')
-    ax0.hist(plot_resids_c2, 50)
+    ax0.hist(diff_before, 100)
     pp.savefig()
 
     # histogram of diff of individual objects after calibration
     fig = plt.figure()
-    title = "Mag diff from mean after cal (std dev %e)" %np.std(plot_resids_d2[rel_indices])
+    diff_after = des_data['mags_calib']-des_data['mags_mean_calib']
+    title = "Mag diff from mean after cal (std dev %e)" %np.std(diff_after)
     print title
     xlab = "Magnitudes (%s band)" %band
     ax0 = fig.add_subplot(1,1,1, xlabel=xlab, ylabel=ylab, title=title)
     ax0.set_yscale('log')
-    ax0.hist(plot_resids_d2[rel_indices], 50)
+    ax0.hist(diff_after, 100)
     pp.savefig()
     
     # diff of individual objects after calibration, vs mag
     fig = plt.figure()
-    title = "Mag diff from mean after cal (std dev %e)" %np.std(plot_resids_d2[rel_indices])
-    xlab = "Magnitudes (%s band)" %band
     ax0 = fig.add_subplot(1,1,1, xlabel=xlab, ylabel=ylab, title=title)
-    # ax0.hexbin(rel_resids_magafter[rel_indices], plot_resids_d2[rel_indices], bins='log', extent=(np.min(rel_resids_magafter[rel_indices]),np.max(rel_resids_magafter[rel_indices]), -0.05, 0.05 ))
-    # ax0.hexbin(rel_resids_magafter[rel_indices], abs(plot_resids_d2[rel_indices]), bins='log', extent=(np.min(rel_resids_magafter[rel_indices]),np.max(rel_resids_magafter[rel_indices]), 0.0, 0.02 ))
-    mags_inbins = rel_resids_magafter[(rel_resids_magafter[rel_indices]>15.0) & (rel_resids_magafter[rel_indices]<21.0)]
-    resids_inbins = plot_resids_d2[(rel_resids_magafter[rel_indices]>15.0) & (rel_resids_magafter[rel_indices]<21.0)]
+    inbins = (des_data['mags_calib']>15.0) & (des_data['mags_calib']<21.0)
+    mags_inbins = des_data['mags_calib'][inbins]
+    resids_inbins = des_data['mags_calib'][inbins]-des_data['mags_mean_calib'][inbins]
     magbins = np.arange(15,21,0.2)
     indices = np.digitize(mags_inbins, magbins)
     means = np.zeros(len(magbins-1))
@@ -594,88 +399,26 @@ def make_plots(config):
     ax0.set_ylim(0.0,0.02)
     pp.savefig()
     
-    # zp by ra and dec
-    ra_array = []
-    dec_array = []
-    diffb_array = []
-    diffa_array = []
-    sdss_array = []
-    image_before_array = []
-    image_after_array = []
-    n_array = []
-    ccd_array = np.zeros(n_ccds+1)
-    ras_35 = []
-    decs_35 = []
-    for key in image_resids_a:
-        ra_array.append(image_ras[key])
-        dec_array.append(image_decs[key])
-        diffb_array.append(image_diffbs[key])
-        diffa_array.append(image_diffas[key])
-        n_array.append(image_ns[key])
-        image_before_array.append(image_befores[key])
-        sdss_array.append(sdss_mags[key])
-        image_after_array.append(image_afters[key])
-        ccd_array[image_ccds[key]] += 1
-        if image_ccds[key] == 35:
-            ras_35.append(image_ras[key])
-            decs_35.append(image_decs[key])
-    ra_array = np.array(ra_array)
-    dec_array = np.array(dec_array)
-    diffb_array = np.array(diffb_array)
-    diffa_array = np.array(diffa_array)
-
-    mdiffstdb = np.std(total_magdiffsb)
-    mdiffstda = np.std(total_magdiffsa)
-
+    
     title = "Resid of mean from stds before cal"
     fig = plt.figure()
-    ax0 = fig.add_subplot(1,1,1, xlabel=xlab, ylabel=ylab, title=title)
     ylab = "DES - std mag"
-    im0 = ax0.hexbin(image_before_array, diffb_array, bins='log', extent=(np.min(image_before_array), np.max(image_before_array), np.median(total_magdiffsb)-3*mdiffstdb, np.median(total_magdiffsb)+3*mdiffstdb)) 
-    fig.colorbar(im0)
-    pp.savefig()
-
-    fig = plt.figure()
-    title = "Resid of mean from stds after cal"
     ax0 = fig.add_subplot(1,1,1, xlabel=xlab, ylabel=ylab, title=title)
-    im0 = ax0.hexbin(image_after_array, diffa_array, bins='log', extent=(np.min(image_after_array), np.max(image_after_array), np.median(total_magdiffsa)-3*mdiffstda, np.median(total_magdiffsa)+3*mdiffstda)) 
-    fig.colorbar(im0)
-    pp.savefig()
-
-
-
-    fig = plt.figure()
-    title = "Standard star locations"
-    xlab = "RA"
-    ylab = "Dec"
-    ax0 = fig.add_subplot(1,1,1, xlabel=xlab, ylabel=ylab, title=title)
-    im0 = ax0.hexbin(standard_ras, standard_decs, extent=(np.min(ra_array),np.max(ra_array),np.min(dec_array),np.max(dec_array))) 
-    # fig.colorbar(im0)
+    im0 = ax0.hexbin(std_data['mags'], std_data['mags']-std_data['mags_std'], bins='log', extent=(np.min(std_data['mags']), np.max(std_data['mags']), np.median(std_data['mags']-std_data['mags_calib'])-stddev_std_before, np.median(std_data['mags']-std_data['mags_calib'])+stddev_std_before)) 
     pp.savefig()
     
     fig = plt.figure()
-    title = "Pointings (Central locations of CCD 35)"
-    xlab = "RA"
-    ylab = "Dec"
+    title = "Resid of mean from stds after cal"
     ax0 = fig.add_subplot(1,1,1, xlabel=xlab, ylabel=ylab, title=title)
-    print "%d instances of ccd 35" %len(ras_35)
-    im0 = ax0.hexbin(ras_35, decs_35, bins='log',extent=(np.min(ra_array),np.max(ra_array),np.min(dec_array),np.max(dec_array)))
+    im0 = ax0.hexbin(std_data['mags_calib'], std_data['mags_calib']-std_data['mags_std'], bins='log', extent=(np.min(std_data['mags_calib']), np.max(std_data['mags_calib']), np.median(std_data['mags_calib']-std_data['mags_std'])-stddev_std_after, np.median(std_data['mags_calib']-std_data['mags_std'])+stddev_std_after)) 
     pp.savefig()
-
-    # the plots get really big at this point, so let's try plotting a subsample.
-    if len(ra_array) > 100000:
-        indices = range(len(ra_array))
-        np.random.shuffle(indices)
-        indices = indices[0:100000]
-    else:
-        indices = range(len(ra_array))
     
     fig = plt.figure()
     title = "Resid of mean from stds by ra and dec before cal"
     xlab = "RA"
     ylab = "Dec"
     ax0 = fig.add_subplot(211, xlabel=xlab, ylabel=ylab, title=title)
-    im0 = ax0.hexbin(ra_array[indices], dec_array[indices], diffb_array[indices], vmin=np.median(total_magdiffsb)-2*mdiffstdb, vmax=np.median(total_magdiffsb)+2*mdiffstdb,gridsize=(int(np.max(ra_array)-np.min(ra_array)),int(np.max(dec_array)-np.min(dec_array))))
+    im0 = ax0.hexbin(std_data['ras'], std_data['decs'], std_data['mags']-std_data['mags_std'], vmin=np.median(std_data['mags']-std_data['mags_std'])-stddev_std_before, vmax=np.median(std_data['mags']-std_data['mags_std'])+stddev_std_before)
     fig.colorbar(im0)
     ax0.set_aspect('equal')
     
@@ -683,36 +426,23 @@ def make_plots(config):
     xlab = "RA"
     ylab = "Dec"
     ax1 = fig.add_subplot(212, xlabel=xlab, ylabel=ylab, title=title)
-    im1 = ax1.hexbin(ra_array[indices], dec_array[indices], diffa_array[indices], vmin=np.median(total_magdiffsa)-2*mdiffstda, vmax=np.median(total_magdiffsa)+2*mdiffstda,gridsize=(int(np.max(ra_array)-np.min(ra_array)),int(np.max(dec_array)-np.min(dec_array))))
+    im1 = ax1.hexbin(std_data['ras'], std_data['decs'], std_data['mags_calib']-std_data['mags_std'], vmin=np.median(std_data['mags_calib']-std_data['mags_std'])-stddev_std_after, vmax=np.median(std_data['mags_calib']-std_data['mags_std'])+stddev_std_after)
     fig.colorbar(im1)
     ax1.set_aspect('equal')
     pp.savefig()
     
-    fig = plt.figure()
-    title = "Resid of mean from stds by ra after cal"
-    ax0 = fig.add_subplot(111, xlabel=xlab, ylabel=ylab, title=title)
-    ax0.hexbin(ra_array[indices],diffa_array[indices])
-    pp.savefig()
-
-    # the plots get really big at this point, so let's try plotting a subsample.
-    if len(plot_resids_b2) > 50000:
-        indices = range(len(plot_resids_b2))
-        np.random.shuffle(indices)
-        indices = indices[0:50000]
-    else:
-        indices = range(len(plot_resids_b2))
+    sns.set(style="white", rc={'image.cmap': colormap})
     
-
     fig = plt.figure()
     title = "Diff of objects' mags from mean, before cal"
-    ax0 = fig.add_subplot(211, title=title)
-    im0 = ax0.hexbin(rel_resids_ras[rel_indices], rel_resids_decs[rel_indices], plot_resids_c2[rel_indices], reduce_C_function = np.mean, vmin=np.median(plot_resids_c2[rel_indices])-sum_rms_before, vmax=np.median(plot_resids_c2[rel_indices])+sum_rms_before) 
+    ax0 = fig.add_subplot(211, xlabel=xlab, ylabel=ylab, title=title)
+    im0 = ax0.hexbin(des_data['ras'], des_data['decs'], des_data['mags']-des_data['mags_mean'], reduce_C_function = np.mean, vmin=np.median(des_data['mags']-des_data['mags_mean'])-stddev_des_before, vmax=np.median(des_data['mags']-des_data['mags_mean'])+stddev_des_before) 
     fig.colorbar(im0)
     ax0.set_aspect('equal')
     
     title = "Diff of objects' mags from mean, after cal"
-    ax1 = fig.add_subplot(212, title=title)
-    im1 = ax1.hexbin(rel_resids_ras[rel_indices], rel_resids_decs[rel_indices], plot_resids_d2[rel_indices], reduce_C_function = np.mean, vmin=np.median(plot_resids_d2[rel_indices])-sum_rms_after, vmax=np.median(plot_resids_d2[rel_indices])+sum_rms_after) 
+    ax1 = fig.add_subplot(212, xlabel=xlab, ylabel=ylab, title=title)
+    im1 = ax1.hexbin(des_data['ras'], des_data['decs'], des_data['mags_calib']-des_data['mags_mean_calib'], reduce_C_function = np.mean, vmin=np.median(des_data['mags_calib']-des_data['mags_mean_calib'])-stddev_des_after, vmax=np.median(des_data['mags_calib']-des_data['mags_mean_calib'])+stddev_des_after) 
     ax1.set_aspect('equal')
     fig.colorbar(im1)
     pp.savefig()
@@ -720,12 +450,12 @@ def make_plots(config):
     fig = plt.figure()
     title = "Mag zeropoints (mean)"
     ax0 = fig.add_subplot(211, title=title)
-    im0 = ax0.hexbin(rel_resids_ras[rel_indices], rel_resids_decs[rel_indices], plot_resids_f2[rel_indices], reduce_C_function = np.mean) 
+    im0 = ax0.hexbin(des_data['ras'], des_data['decs'], des_data['mags_calib']-des_data['mags'], reduce_C_function = np.mean) 
     ax0.set_aspect('equal')
     fig.colorbar(im0)
     title = "Mag zeropoints (median)"
     ax1 = fig.add_subplot(212, title=title)
-    im1 = ax1.hexbin(rel_resids_ras[rel_indices], rel_resids_decs[rel_indices], plot_resids_f2[rel_indices], reduce_C_function = np.median) 
+    im1 = ax1.hexbin(des_data['ras'], des_data['decs'], des_data['mags_calib']-des_data['mags'], reduce_C_function = np.median) 
     ax1.set_aspect('equal')
     fig.colorbar(im1)
     pp.savefig()
@@ -734,39 +464,31 @@ def make_plots(config):
     fig = plt.figure()
     title = "Residual of indiv meas from stds before cal"
     ax0 = fig.add_subplot(1,1,1, title=title)
-    #mdiffstdb
-    im0 = ax0.hexbin(plot_resids_b2_xs[indices], plot_resids_b2_ys[indices], plot_resids_b2[indices], gridsize=400, reduce_C_function = np.mean, vmin=np.median(total_magdiffsb)-3*sum_rms_before, vmax=np.median(total_magdiffsb)+3*sum_rms_before) 
+    im0 = ax0.hexbin(std_data['xs'], std_data['ys'], std_data['mags']-std_data['mags_std'], gridsize=200, reduce_C_function = np.mean, vmin=np.median(std_data['mags']-std_data['mags_std'])-stddev_std_before, vmax=np.median(std_data['mags']-std_data['mags_std'])+stddev_std_before) 
     fig.colorbar(im0)
     pp.savefig()
 
     fig = plt.figure()
     title = "Residual of indiv meas from stds after cal"
     ax0 = fig.add_subplot(1,1,1, title=title)
-    #mdiffstda
-    im0 = ax0.hexbin(plot_resids_b2_xs[indices], plot_resids_b2_ys[indices], plot_resids_a2[indices], gridsize=400, reduce_C_function = np.mean, vmin=np.median(total_magdiffsa)-3*sum_rms_after, vmax=np.median(total_magdiffsa)+3*sum_rms_after) 
+    im0 = ax0.hexbin(std_data['xs'], std_data['ys'], std_data['mags_calib']-std_data['mags_std'], gridsize=200, reduce_C_function = np.mean, vmin=np.median(std_data['mags_calib']-std_data['mags_std'])-stddev_std_after, vmax=np.median(std_data['mags_calib']-std_data['mags_std'])+stddev_std_after) 
     fig.colorbar(im0)
     pp.savefig()
 
     fig = plt.figure()
     title = "Residual of indiv meas from DES mean before cal"
     ax0 = fig.add_subplot(1,1,1, title=title)
-    im0 = ax0.hexbin(rel_resids_b2_xs[rel_indices], rel_resids_b2_ys[rel_indices], plot_resids_c2[rel_indices], gridsize=400, reduce_C_function = np.mean, vmin=-3*sum_rms_before, vmax=3*sum_rms_before) 
+    im0 = ax0.hexbin(des_data['xs'], des_data['ys'], des_data['mags']-des_data['mags_mean'], gridsize=200, reduce_C_function = np.mean, vmin=-stddev_des_before, vmax=stddev_des_before) 
     fig.colorbar(im0)
     pp.savefig()
 
     fig = plt.figure()
     title = "Residual of indiv meas from DES mean after cal"
     ax0 = fig.add_subplot(1,1,1, title=title)
-    im0 = ax0.hexbin(rel_resids_b2_xs[rel_indices], rel_resids_b2_ys[rel_indices], plot_resids_d2[rel_indices], gridsize=400, reduce_C_function = np.mean, vmin=-3*sum_rms_after, vmax=3*sum_rms_after) 
+    im0 = ax0.hexbin(des_data['xs'], des_data['ys'], des_data['mags_calib']-des_data['mags_mean_calib'], gridsize=200, reduce_C_function = np.mean, vmin=-stddev_des_after, vmax=stddev_des_after) 
     fig.colorbar(im0)
     pp.savefig()
 
-    fig = plt.figure()
-    title = "Residual of indiv meas after cal from DES mean before cal"
-    ax0 = fig.add_subplot(1,1,1, title=title)
-    im0 = ax0.hexbin(rel_resids_b2_xs[rel_indices], rel_resids_b2_ys[rel_indices], plot_resids_e2[rel_indices], gridsize=400, reduce_C_function = np.median, vmin=np.median(plot_resids_e2[rel_indices])-3*sum_rms_after, vmax=np.median(plot_resids_e2[rel_indices])+3*sum_rms_after) 
-    fig.colorbar(im0)
-    pp.savefig()
 
     pp.close()
 

@@ -33,51 +33,50 @@ class FinalCutObj(IsDescription):
     gskyhot = Float32Col()
     lskyhot = Float32Col()
     cloud_nomad = Float32Col()
-
-def assign_obj(object, entries):
-    object['exposureid'] = int(entries[0]) # int(entries[36])
-    object['imageid'] = int(entries[1])
-    object['object_id'] = int(entries[2])
-    object['x_image'] = float(entries[3])
-    object['y_image'] = float(entries[4])
-    object['ra'] = float(entries[5])
-    object['dec'] = float(entries[6])
-    object['mag_psf'] = float(entries[7])
-    object['magerr_psf'] = float(entries[8])
-    object['zeropoint'] = float(entries[9])
-    object['fwhm_arcsec'] = float(entries[11])
-    object['spread_model'] = float(entries[12])
-    object['flags'] = int(entries[13])
-    object['band'] = entries[18]
-    object['ccd'] = int(entries[19])
-    object['airmass'] = float(entries[20])
-    object['ha'] = entries[21]
-    object['zd'] = float(entries[22])
-    object['telera'] = float(entries[23])
-    object['teledec'] = float(entries[24])
-    object['mjd'] = float(entries[25])
-    object['exptime'] = float(entries[26])
-    object['skybrite'] = float(entries[28])
-    object['skysigma'] = float(entries[29])
-    object['image_fwhm_arcsec'] = float(entries[31])
-    if entries[52] == '':
+        
+def assign_obj(object, entries, header):
+    int_entries = ['exposureid','imageid','object_id','flags','ccd']
+    float_entries = ['x_image','y_image','ra','dec','mag_psf','magerr_psf','zeropoint','fwhm_arcsec','spread_model','airmass','zd',
+                     'telera','teledec','mjd','exptime','skybrite','skysigma','image_fwhm_arcsec']
+    string_entries = ['band','ha']
+    
+    for entry in int_entries:
+        object[entry] = int(entries[header[entry]])
+    for entry in float_entries:
+        object[entry] = float(entries[header[entry]])
+    for entry in string_entries:
+        object[entry] = entries[header[entry]]
+    
+    if entries[header['cloud_nomad'] == '':
         print 'Filling in for an empty cloud_nomad'
         object['cloud_nomad'] = 0.5 # give missing values a bad value
     else:
-        object['cloud_nomad'] = float(entries[52])
-    if entries[61] == 'T':
+        object['cloud_nomad'] = float(entries[header['cloud_nomad']])
+    if entries[header['gskyphot']] == 'T':
         object['gskyphot'] = 1
     else:
         object['gskyphot'] = 0
-    if entries[62] == 'T':
+    if entries[header['lskyphot']] == 'T':
         object['lskyphot'] = 1
     else:
         object['lskyphot'] = 0
-    object['gskyhot'] = float(entries[64])
-    if entries[66]:
-        object['lskyhot'] = float(entries[66])
+    object['gskyhot'] = float(entries[header['gskyhot']])
+    if entries[header['lskyhot']]:
+        object['lskyhot'] = float(entries[header['lskyhot']])
     else:
         object['lskyhot'] = 0.0
+
+def parse_header(header_line):
+    header = {}
+    index0 = 0
+    entries = header_line.split(',')
+    for e, entry in enumerate(entries):
+        if( entries[0] == '#' ):
+            index0 = 1
+            continue
+        header[entry] = e-index0
+    return header
+
 
 infilename = sys.argv[1]
 
@@ -100,6 +99,8 @@ object_z = table_z.row
 object_y = table_y.row
 
 file = open(infilename, 'r')
+header_line = file.next()
+header = parse_header( header_line )
 for line in file:
     entries = line.split(",")
     # header!
@@ -107,23 +108,23 @@ for line in file:
         continue
 
     if entries[18] == 'u':
-        assign_obj( object_u, entries )
+        assign_obj( object_u, entries, header )
         object_u.append()
     elif entries[18] == 'g':
-        assign_obj( object_g, entries )
+        assign_obj( object_g, entries, header )
         object_g.append()
     elif entries[18] == 'r':
-        assign_obj( object_r, entries )
+        assign_obj( object_r, entries, header )
         object_r.append()
     elif entries[18] == 'i':
-        assign_obj( object_i, entries )
+        assign_obj( object_i, entries, header )
         # print "{0} {1} {2}".format(object_i['ra'], object_i['dec'], object_i['gskyhot'])
         object_i.append()
     elif entries[18] == 'z':
-        assign_obj( object_z, entries )
+        assign_obj( object_z, entries, header )
         object_z.append()
     elif entries[18] == 'Y':
-        assign_obj( object_y, entries )
+        assign_obj( object_y, entries, header )
         object_y.append()
 
 table_u.flush()

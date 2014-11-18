@@ -30,7 +30,7 @@ def good_quality(star):
     return False
 
 def standard_quality(star):
-    if star['image_id'] != 1 and star['magerr_psf'] < good_quality_magerr and star['x_image']>100. and star['x_image']<1900. and star['y_image']>100. and star['y_image']<3950. and star['cloud_nomad']<0.2 and star['gskyphot'] == 1:
+    if star['image_id'] != 1 and 5.0 < star['mag_psf'] < 30.0 and 0.0 < star['magerr_psf'] < good_quality_magerr and star['x_image']>100. and star['x_image']<1900. and star['y_image']>100. and star['y_image']<3950. and star['cloud_nomad']<0.2 and star['gskyphot'] == 1:
         return True
     else:
         return False
@@ -39,6 +39,32 @@ def ok_quality(star):
     if star['magerr_psf'] < good_quality_magerr*2.0 and star['x_image']>100. and star['x_image']<1900. and star['y_image']>100. and star['y_image']<3950.:
         return True
     return False
+
+def read_ccdpos():
+    posfile = open("/Users/bauer/surveys/DES/ccdPos-v2.par", 'r')
+    posarray = posfile.readlines()
+    fp_xs = []
+    fp_ys = []
+    fp_xindices = []
+    fp_yindices = []
+    # put in a dummy ccd=0
+    fp_xs.append(0.)
+    fp_ys.append(0.)
+    fp_xindices.append(0.)
+    fp_yindices.append(0.)
+    for i in range(21,83,1):
+        entries = posarray[i].split(" ")
+        fp_yindices.append(int(entries[2])-1)
+        fp_xindices.append(int(entries[3])-1)
+        fp_xs.append(66.6667*(float(entries[4])-211.0605) - 1024) # in pixels
+        fp_ys.append(66.6667*float(entries[5]) - 2048)
+    fp_yindices.append(fp_yindices[-1])
+    fp_xindices.append(fp_xindices[-1])
+    fp_xoffsets = [4,3,2,1,1,0,0,1,1,2,3,4]
+    fp_xindices = 2*np.array(fp_xindices)
+    fp_yindices = np.array(fp_yindices)
+    # print "parsed focal plane positions for %d ccds" %len(fp_xs)
+    return fp_xs, fp_ys
 
 def apply_zps(mag, star, zp_list, bad_idvals):
     for zps in zp_list:
