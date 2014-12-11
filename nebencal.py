@@ -98,7 +98,7 @@ class Matrix_Inputs(object):
         
         a_matrix = coo_matrix((self.a_matrix_vals[0:self.matrix_size], (self.a_matrix_ys[0:self.matrix_size], self.a_matrix_xs[0:self.matrix_size])), shape=(self.ndets,max_nimgs_total))
         
-        # (a_matrix, b_vector, c_vector) = tie_idvals(a_matrix, b_vector, c_vector, mag_vector)
+        (a_matrix, self.b_vector, self.c_vector) = tie_idvals(a_matrix, self.b_vector, self.c_vector, self.mag_vector)
         ndets = len(self.c_vector)
         
         c_matrix = lil_matrix((ndets,ndets))
@@ -259,17 +259,27 @@ def tie_idvals(a_matrix, b_vector, c_vector, mag_vector):
     # - they are not connected directly
     # - we do not have this connection already in our linking sample
     linked = {}
+    print 'argsorting'
     indices = np.argsort(mag_vector)
+    i0 = -1
     i1=0
     i2=1
     n_target = 0.05*len(b_vector) # add 5% to the problem
     n_added = 0
+    
+    a_newvals = np.zeros((int(n_target)+2,a_matrix.shape[1]))
+    b_newvals = np.zeros(int(n_target)+2)
+    
+    print 'starting while;  n_target={0}'.format(n_target)
     while i2<len(indices)-1:
         index1 = indices[i1]
-        index2 = indices[i2]
         nonzero1 = (a_matrix.getrow(index1).toarray()!=0)[0]
+        index2 = indices[i2]
         nonzero2 = (a_matrix.getrow(index2).toarray()!=0)[0]
-        if np.sum(nonzero1 & nonzero2) == 0: # they are not connected by anything in p_vector
+        print 'before if'
+        # if np.sum(nonzero1 & nonzero2) == 0: # they are not connected by anything in p_vector
+        if (nonzero1 & nonzero2).all() == 0: # they are not connected by anything in p_vector
+            print 'not connected'
             first_nonzero1 = np.nonzero(nonzero1)[0][0]
             first_nonzero2 = np.nonzero(nonzero2)[0][0]
             
@@ -277,27 +287,44 @@ def tie_idvals(a_matrix, b_vector, c_vector, mag_vector):
             already = False
             if (first_nonzero1 in linked.keys()) and (first_nonzero2 in linked[first_nonzero1]):
                 already = True
-            if (first_nonzero2 in linked.keys()) and (first_nonzero1 in linked[first_nonzero2]):
+            elif (first_nonzero2 in linked.keys()) and (first_nonzero1 in linked[first_nonzero2]):
                 already = True
             
+            print 'already {0}'.format(already)
             if not already:
                 # add this to our linked dictionary for bookkeeping
-                if not first_nonzero1 in linked:
-                    linked[first_nonzero1] = []
-                linked[first_nonzero1].append(first_nonzero2)
-                if not first_nonzero2 in linked:
-                    linked[first_nonzero2] = []
-                linked[first_nonzero2].append(first_nonzero1)
-            
+                try:
+                    linked[first_nonzero1].append(first_nonzero2)
+                except KeyError:
+                    linked[first_nonzero1] = [first_nonzero2]
+                try:
+                    linked[first_nonzero2].append(first_nonzero1)
+                except KeyError:
+                    linked[first_nonzero2] = [first_nonzero1]
+                print 'finished linking'
+                
                 # add two entries to b_vector, with normal individual A and c but their mean in b
                 # stop after i get X% of the original vector length.  5%?
                 mean_mag = 0.5*(mag_vector[index1] + mag_vector[index2])
-                b_vector = np.hstack((b_vector, [mag_vector[index1]-mean_mag, mag_vector[index2]-mean_mag]))
-                c_vector = np.hstack((c_vector, [0.02, 0.02])) # arbitrary, same as systematic error added elsewhere
-            
-                a_matrix = sparsevstack([a_matrix, a_matrix.getrow(index1)])
-                a_matrix = sparsevstack([a_matrix, a_matrix.getrow(index2)])
-            
+                # b_vector = np.hstack((b_vector, [mag_vector[index1]-mean_mag, mag_vector[index2]-mean_mag]))
+                # c_vector = np.hstack((c_vector, [0.02, 0.02])) # arbitrary, same as systematic error added elsewhere
+                
+                print 'before newvals'
+                # a_matrix = sparsevstack([a_matrix, np.vstack((nonzero1,nonzero2))]) #a_matrix.getrow(index1)])
+                # if a_newvals is None:
+                #     a_newvals = np.vstack((nonzero1,nonzero2))
+                # else:
+                #     a_newvals = np.vstack((a_newvals,nonzero1,nonzero2))
+                a_newvals[n_added,:] = nonzero1
+                a_newvals[n_added+1,:] = nonzero2
+                b_newvals[n_added:n_added+2] = [mag_vector[index1]-mean_mag, mag_vector[index2]-mean_mag]
+                
+                # a_matrix = sparsevstack([a_matrix, ((nonzero1),(nonzero2)))]) #a_matrix.getrow(index1)])
+                # a_matrix = sparsevstack([a_matrix, a_matrix.getrow(index1)])
+                # a_matrix = sparsevstack([a_matrix, a_matrix.getrow(index2)])
+                
+                print 'finished adding'
+                
                 n_added += 2
             
                 if n_added >= n_target:
@@ -310,7 +337,14 @@ def tie_idvals(a_matrix, b_vector, c_vector, mag_vector):
     
     if n_added < n_target:
         print 'tie_idvals: Warning, only found {0}/{1} similar objects to tie together the field'.format(n_added/2, len(b_vector)/2)
-            
+    
+    print 'making outputs'
+    a_matrix = sparsevstack([a_matrix, a_newvals[0:n_added,:]])
+    b_vector = np.hstack((b_vector, b_newvals[0:n_added]))
+    c_vector = np.hstack( (c_vector, 0.02*np.ones(n_added)) )
+    
+    exit(1)
+    
     return (a_matrix, b_vector, c_vector)
 
 
@@ -544,7 +578,7 @@ def nebencalibrate_pixel( inputs ):
     if global_objs_list is None:
         return None, None, None, None
         
-    print "Starting pixel %d: %d global objects" %(pix, len(global_objs_list))
+    print "\nStarting pixel %d: %d global objects" %(pix, len(global_objs_list))
     
     bad_idvals = []
     for nid, id_string in enumerate(id_strings):
@@ -756,8 +790,7 @@ def nebencalibrate_pixel( inputs ):
                             if star2[id_string] in image_id_dict[0]:
                                 img_connectivity[image_id_dict[0][star[id_string]], image_id_dict[0][star2[id_string]]] = 1
                 
-        print "%d good previous zps, %d bad" %(n_good_e, n_bad_e)
-        print '{0} images in image_id_dict[0]'.format(len(image_id_dict[0].keys()))
+        # print "%d good previous zps, %d bad" %(n_good_e, n_bad_e)
         n_components = 1
         labels = None
         if len(id_strings) > 1:
@@ -959,7 +992,7 @@ def nebencalibrate_pixel( inputs ):
             p_vector[p_base:p_base+max_nimgs[nid]] -= mean_zp
             p_base += max_nimgs[nid]
                     
-        print 'Iteration {0}: {1} measurement outliers, {2} image outliers'.format(iteration,nmeas_flagged,nimgs_flagged)
+        print 'Iteration {0}: {1} measurement outliers, {2} image outliers\n'.format(iteration,nmeas_flagged,nimgs_flagged)
         
     # end loop over iterations!
     
@@ -1012,22 +1045,22 @@ def nebencalibrate_pixel( inputs ):
         
             # cut out the bad objects for ALL id strings!  (all calibration identifiers)
             go_objects = [obj for obj in go.objects if (obj[id_string] in worst_ok_err[nid] and obj['magerr_psf'] < worst_ok_err[nid][obj[id_string]][1]) or (obj[id_string] not in worst_ok_err[nid])]
-
+            
             if len(go_objects) < 2:
                 continue
-
+                
             ndet = len(go_objects)
-
+            
             if ndet < 2:
                 continue
-    
+            
             # are there both good and bad idvals in this object?
             calibrated = [obj[id_string] in image_id_dict[nid] for obj in go_objects]
             if True not in calibrated or False not in calibrated:
                 continue
-    
+            
             # jimmy the measurements so that all the calibrated ones are averaged into one value.            
-        
+            
             ndet = 2 # for each id val separately
             ndet_calib = np.sum(calibrated)
             
