@@ -98,6 +98,7 @@ def make_gos(filename, nside, band):
         star2['ccd'] = star['ccd']
         star2['airmass'] = star['airmass']
         star2['mjd'] = star['mjd']
+        star2['exptime'] = star['exptime']
         star2['matched'] = 0
         star2['count'] = 0
         star2['gskyphot'] = star['gskyphot']
@@ -190,7 +191,7 @@ def make_gos(filename, nside, band):
 
 
 def main():
-    filters = ['g','r','i','z'] #,'y']
+    filters = ['i','g','r','z','y']
     nside = 32 # 2: 30 degrees per side, 4: 15 degrees per side, 8:  7.3 degrees per side
     
     print "Making global objects from DES, filters {0}!".format(filters)

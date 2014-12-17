@@ -30,7 +30,8 @@ def good_quality(star):
     return False
 
 def standard_quality(star):
-    if star['image_id'] != 1 and 5.0 < star['mag_psf'] < 30.0 and 0.0 < star['magerr_psf'] < good_quality_magerr and star['x_image']>100. and star['x_image']<1900. and star['y_image']>100. and star['y_image']<3950. and star['cloud_nomad']<0.2 and star['gskyphot'] == 1:
+    exptimes = {'g':90., 'r':90., 'i':90., 'z':90., 'y':45.}
+    if star['exptime'] == exptimes[star['band']] and star['image_id'] != 1 and 5.0 < star['mag_psf'] < 30.0 and 0.0 < star['magerr_psf'] < good_quality_magerr and star['x_image']>100. and star['x_image']<1900. and star['y_image']>100. and star['y_image']<3950. and star['cloud_nomad']<0.2 and star['gskyphot'] == 1:
         return True
     else:
         return False

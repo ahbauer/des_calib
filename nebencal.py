@@ -259,91 +259,85 @@ def tie_idvals(a_matrix, b_vector, c_vector, mag_vector):
     # - they are not connected directly
     # - we do not have this connection already in our linking sample
     linked = {}
-    print 'argsorting'
     indices = np.argsort(mag_vector)
-    i0 = -1
-    i1=0
-    i2=1
-    n_target = 0.05*len(b_vector) # add 5% to the problem
-    n_added = 0
     
-    a_newvals = np.zeros((int(n_target)+2,a_matrix.shape[1]))
-    b_newvals = np.zeros(int(n_target)+2)
+    # now randomly pick 5%!  screw possible repeats, we have the need for speed.
+    n_target = int(0.02*0.5*len(indices))
+    link_indices1=np.random.randint(0, len(indices), n_target)
+    link_indices2 = link_indices1+1
     
-    print 'starting while;  n_target={0}'.format(n_target)
-    while i2<len(indices)-1:
-        index1 = indices[i1]
-        nonzero1 = (a_matrix.getrow(index1).toarray()!=0)[0]
-        index2 = indices[i2]
-        nonzero2 = (a_matrix.getrow(index2).toarray()!=0)[0]
-        print 'before if'
-        # if np.sum(nonzero1 & nonzero2) == 0: # they are not connected by anything in p_vector
-        if (nonzero1 & nonzero2).all() == 0: # they are not connected by anything in p_vector
-            print 'not connected'
-            first_nonzero1 = np.nonzero(nonzero1)[0][0]
-            first_nonzero2 = np.nonzero(nonzero2)[0][0]
+    a_newvals = np.zeros((int(2*n_target)+2,a_matrix.shape[1]))
+    b_newvals = np.zeros(int(2*n_target)+2)
+    
+    n_added=0
+    
+    # just do it in a vectorized way, forget about being careful.
+    nonzeros1 = np.zeros((n_target,a_matrix.shape[1]))
+    nonzeros2 = np.zeros((n_target,a_matrix.shape[1]))
+    for l in range(len(link_indices1)):
+        nonzeros1[l,:] = a_matrix.getrow(indices[link_indices1[l]]).toarray()
+        nonzeros2[l,:] = a_matrix.getrow(indices[link_indices2[l]]).toarray()
+    avgmags = 0.5*(mag_vector[indices[link_indices1]] + mag_vector[indices[link_indices2]])
+    a_newvals = np.vstack((nonzeros1,nonzeros2))
+    b_newvals = np.hstack((mag_vector[indices[link_indices1]]-avgmags,mag_vector[indices[link_indices2]]-avgmags))
+    n_added = len(b_newvals)
+    
+    # for li in link_indices:
+    #     index1 = indices[li]
+    #     # nonzero1 = (a_matrix.getrow(index1).toarray()!=0)[0]
+    #     nonzero1 = a_matrix.getrow(index1).toarray()[0]
+    #     index2 = indices[li+1]
+    #     # nonzero2 = (a_matrix.getrow(index2).toarray()!=0)[0]
+    #     nonzero2 = a_matrix.getrow(index2).toarray()[0]
+    #     # if np.sum(nonzero1 & nonzero2) == 0: # they are not connected by anything in p_vector
+    #     if not np.any(nonzero1*nonzero2): # they are not connected by anything in p_vector
+    #         first_nonzero1 = np.nonzero(nonzero1)[0][0]
+    #         first_nonzero2 = np.nonzero(nonzero2)[0][0]
+    #         
+    #         # if we already have linked these zps (just the first one in the idval list), continue.
+    #         already = False
+    #         if (first_nonzero1 in linked.keys()) and (first_nonzero2 in linked[first_nonzero1]):
+    #             already = True
+    #         # elif (first_nonzero2 in linked.keys()) and (first_nonzero1 in linked[first_nonzero2]):
+    #         #     already = True
+    #         
+    #         if not already:
+    #             # add this to our linked dictionary for bookkeeping
+    #             try:
+    #                 linked[first_nonzero1].append(first_nonzero2)
+    #             except KeyError:
+    #                 linked[first_nonzero1] = [first_nonzero2]
+    #             try:
+    #                 linked[first_nonzero2].append(first_nonzero1)
+    #             except KeyError:
+    #                 linked[first_nonzero2] = [first_nonzero1]
+    #             
+    #             # add two entries to b_vector, with normal individual A and c but their mean in b
+    #             # stop after i get X% of the original vector length.  5%?
+    #             mean_mag = 0.5*(mag_vector[index1] + mag_vector[index2])
+    #             # b_vector = np.hstack((b_vector, [mag_vector[index1]-mean_mag, mag_vector[index2]-mean_mag]))
+    #             # c_vector = np.hstack((c_vector, [0.02, 0.02])) # arbitrary, same as systematic error added elsewhere
+    #             
+    #             # a_matrix = sparsevstack([a_matrix, np.vstack((nonzero1,nonzero2))]) #a_matrix.getrow(index1)])
+    #             # if a_newvals is None:
+    #             #     a_newvals = np.vstack((nonzero1,nonzero2))
+    #             # else:
+    #             #     a_newvals = np.vstack((a_newvals,nonzero1,nonzero2))
+    #             a_newvals[n_added,:] = nonzero1
+    #             a_newvals[n_added+1,:] = nonzero2
+    #             b_newvals[n_added:n_added+2] = [mag_vector[index1]-mean_mag, mag_vector[index2]-mean_mag]
+    #             
+    #             # a_matrix = sparsevstack([a_matrix, ((nonzero1),(nonzero2)))]) #a_matrix.getrow(index1)])
+    #             # a_matrix = sparsevstack([a_matrix, a_matrix.getrow(index1)])
+    #             # a_matrix = sparsevstack([a_matrix, a_matrix.getrow(index2)])
+    #             
+    #             n_added += 2
             
-            # if we already have linked these zps (just the first one in the idval list), continue.
-            already = False
-            if (first_nonzero1 in linked.keys()) and (first_nonzero2 in linked[first_nonzero1]):
-                already = True
-            elif (first_nonzero2 in linked.keys()) and (first_nonzero1 in linked[first_nonzero2]):
-                already = True
-            
-            print 'already {0}'.format(already)
-            if not already:
-                # add this to our linked dictionary for bookkeeping
-                try:
-                    linked[first_nonzero1].append(first_nonzero2)
-                except KeyError:
-                    linked[first_nonzero1] = [first_nonzero2]
-                try:
-                    linked[first_nonzero2].append(first_nonzero1)
-                except KeyError:
-                    linked[first_nonzero2] = [first_nonzero1]
-                print 'finished linking'
-                
-                # add two entries to b_vector, with normal individual A and c but their mean in b
-                # stop after i get X% of the original vector length.  5%?
-                mean_mag = 0.5*(mag_vector[index1] + mag_vector[index2])
-                # b_vector = np.hstack((b_vector, [mag_vector[index1]-mean_mag, mag_vector[index2]-mean_mag]))
-                # c_vector = np.hstack((c_vector, [0.02, 0.02])) # arbitrary, same as systematic error added elsewhere
-                
-                print 'before newvals'
-                # a_matrix = sparsevstack([a_matrix, np.vstack((nonzero1,nonzero2))]) #a_matrix.getrow(index1)])
-                # if a_newvals is None:
-                #     a_newvals = np.vstack((nonzero1,nonzero2))
-                # else:
-                #     a_newvals = np.vstack((a_newvals,nonzero1,nonzero2))
-                a_newvals[n_added,:] = nonzero1
-                a_newvals[n_added+1,:] = nonzero2
-                b_newvals[n_added:n_added+2] = [mag_vector[index1]-mean_mag, mag_vector[index2]-mean_mag]
-                
-                # a_matrix = sparsevstack([a_matrix, ((nonzero1),(nonzero2)))]) #a_matrix.getrow(index1)])
-                # a_matrix = sparsevstack([a_matrix, a_matrix.getrow(index1)])
-                # a_matrix = sparsevstack([a_matrix, a_matrix.getrow(index2)])
-                
-                print 'finished adding'
-                
-                n_added += 2
-            
-                if n_added >= n_target:
-                    print 'tie_idvals: Added {0}/{1} objects to tie together different regions'.format(n_added/2, len(b_vector)/2)
-                    break
-        i2 += 1
-        if (mag_vector[indices[i2]]-mag_vector[index1] > 0.005) or (i2 >= len(indices)-1): # arbitrary but close to relative calibration floor
-            i1 += 1
-            i2 = i1+1
+    print 'tie_idvals: Added {0}/{1} (={2}%) objects to tie together different regions'.format(n_added/2, len(b_vector)/2, 100.*n_added/len(b_vector))
     
-    if n_added < n_target:
-        print 'tie_idvals: Warning, only found {0}/{1} similar objects to tie together the field'.format(n_added/2, len(b_vector)/2)
-    
-    print 'making outputs'
     a_matrix = sparsevstack([a_matrix, a_newvals[0:n_added,:]])
     b_vector = np.hstack((b_vector, b_newvals[0:n_added]))
     c_vector = np.hstack( (c_vector, 0.02*np.ones(n_added)) )
-    
-    exit(1)
     
     return (a_matrix, b_vector, c_vector)
 
